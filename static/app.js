@@ -655,7 +655,7 @@ function avviaRilevamento() {
     }, 400);
   } else if (window.ZXing) {
     scanZxingReader = new ZXing.BrowserMultiFormatReader();
-    scanZxingReader.decodeFromVideoElement(scanVideo, (result, err) => {
+    scanZxingReader.decodeFromVideoElementContinuously(scanVideo, (result, err) => {
       if (scanInPausa) return;
       if (result) gestisciBarcodeRilevato(result.getText());
     });
