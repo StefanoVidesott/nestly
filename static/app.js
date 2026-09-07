@@ -454,14 +454,30 @@ document.getElementById("form-igiene-tipo").addEventListener("submit", async (e)
 
 async function caricaFrigo() {
   const items = await apiGet("/frigo");
-  const cont = document.getElementById("lista-frigo");
-  cont.innerHTML = "";
-  if (items.length === 0) {
-    cont.innerHTML = `<p class="text-sm text-slate-400 text-center py-4">Fridge is empty</p>`;
-    return;
-  }
   const oggi = new Date();
   oggi.setHours(0, 0, 0, 0);
+
+  renderListaFrigo(
+    items.filter((it) => (it.luogo || "frigo") === "frigo"),
+    "lista-frigo",
+    "Fridge is empty",
+    oggi
+  );
+  renderListaFrigo(
+    items.filter((it) => it.luogo === "freezer"),
+    "lista-freezer",
+    "Freezer is empty",
+    oggi
+  );
+}
+
+function renderListaFrigo(items, contId, emptyMsg, oggi) {
+  const cont = document.getElementById(contId);
+  cont.innerHTML = "";
+  if (items.length === 0) {
+    cont.innerHTML = `<p class="text-sm text-slate-400 text-center py-4">${emptyMsg}</p>`;
+    return;
+  }
   for (const it of items) {
     cont.appendChild(creaRigaFrigo(it, oggi));
   }
@@ -534,6 +550,21 @@ document.getElementById("form-frigo").addEventListener("submit", async (e) => {
     nome: document.getElementById("frigo-nome").value,
     quantita: document.getElementById("frigo-quantita").value,
     scadenza: scadenza || null,
+    luogo: "frigo",
+  };
+  await apiSend("/frigo", "POST", body);
+  e.target.reset();
+  caricaFrigo();
+});
+
+document.getElementById("form-freezer").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const scadenza = document.getElementById("freezer-scadenza").value;
+  const body = {
+    nome: document.getElementById("freezer-nome").value,
+    quantita: document.getElementById("freezer-quantita").value,
+    scadenza: scadenza || null,
+    luogo: "freezer",
   };
   await apiSend("/frigo", "POST", body);
   e.target.reset();

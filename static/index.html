@@ -193,6 +193,21 @@
 
           <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
             <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-snowflake text-indigo-600"></i> Freezer
+            </h2>
+            <form id="form-freezer" class="grid grid-cols-3 gap-2 mb-4">
+              <input type="text" id="freezer-nome" placeholder="Food item" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+              <input type="text" id="freezer-quantita" placeholder="Quantity" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+              <input type="date" id="freezer-scadenza" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+              <button class="col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i> Add
+              </button>
+            </form>
+            <div id="lista-freezer" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
               <i class="fa-solid fa-cart-shopping text-indigo-600"></i> Shopping List
             </h2>
             <form id="form-spesa-list" class="flex gap-2 mb-3">

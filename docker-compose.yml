@@ -3,7 +3,7 @@ services:
     build: .
     container_name: nestly
     ports:
-      - "8000:8000"
+      - "8221:8000"
     volumes:
       - erasmus_data:/app/data
     restart: unless-stopped

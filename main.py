@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import create_engine, Column, Integer, String, Date, Time, Boolean, DateTime, Float, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, String, Date, Time, Boolean, DateTime, Float, ForeignKey, UniqueConstraint, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -92,6 +92,7 @@ class AlimentoFrigo(Base):
     nome = Column(String, nullable=False)
     quantita = Column(String, nullable=False)
     scadenza = Column(Date, nullable=True)
+    luogo = Column(String, nullable=False, default="frigo")  # "frigo" | "freezer"
 
 
 class SpesaItem(Base):
@@ -170,6 +171,13 @@ class MealPlan(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+# Lightweight auto-migration: add columns introduced after initial deploy
+# (create_all only creates missing tables, not missing columns on existing ones).
+with engine.begin() as conn:
+    frigo_cols = {c["name"] for c in inspect(engine).get_columns("frigo")}
+    if "luogo" not in frigo_cols:
+        conn.execute(text("ALTER TABLE frigo ADD COLUMN luogo VARCHAR NOT NULL DEFAULT 'frigo'"))
 
 
 # ---------- AUTENTICAZIONE ----------
@@ -371,6 +379,7 @@ class AlimentoFrigoIn(BaseModel):
     nome: str
     quantita: str
     scadenza: Optional[date] = None
+    luogo: str = "frigo"
 
 
 class AlimentoFrigoOut(AlimentoFrigoIn):
