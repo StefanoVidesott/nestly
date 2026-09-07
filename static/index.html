@@ -29,8 +29,8 @@
 <!-- SheetJS (required by Tabulator for Excel export) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-<!-- ZXing (barcode scan fallback for browsers without native BarcodeDetector) -->
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<!-- html5-qrcode (barcode scanner: crops to a center scan box instead of decoding the full raw frame) -->
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
 <link rel="icon" href="data:,">
 
@@ -564,9 +564,7 @@
       <button type="button" id="scan-chiudi" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark text-lg"></i></button>
     </div>
 
-    <div id="scan-camera-wrap" class="relative rounded-lg overflow-hidden bg-black mb-3">
-      <video id="scan-video" class="w-full aspect-square object-cover" playsinline muted autoplay></video>
-    </div>
+    <div id="scan-camera-wrap" class="relative rounded-lg overflow-hidden bg-black mb-3 min-h-[280px]"></div>
 
     <p id="scan-stato" class="text-sm text-slate-500 dark:text-slate-400 text-center mb-1">Point the camera at an EAN-13 barcode</p>
     <p id="scan-debug" class="text-xs text-slate-400 dark:text-slate-600 text-center mb-3 font-mono"></p>

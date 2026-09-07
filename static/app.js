@@ -572,20 +572,20 @@ document.getElementById("form-freezer").addEventListener("submit", async (e) => 
 });
 
 // ---- Scan barcode ----
+// Uses html5-qrcode instead of raw BarcodeDetector/ZXing: it manages its own
+// <video>/<canvas> inside #scan-camera-wrap and, crucially, only decodes a
+// cropped center "qrbox" region instead of the full raw frame — full-frame
+// decoding on a 1920x1080 image was the reason plain ZXing never found a
+// real barcode despite thousands of attempts.
 
-let scanStream = null;
-let scanIntervalId = null;
-let scanBarcodeDetector = null;
-let scanZxingReader = null;
 let scanInPausa = false;
+let scanTentativi = 0;
+let html5QrCode = null;
 
 const modaleScan = document.getElementById("modal-scan");
-const scanVideo = document.getElementById("scan-video");
 const scanStato = document.getElementById("scan-stato");
 const scanDebug = document.getElementById("scan-debug");
 const formScanProdotto = document.getElementById("form-scan-prodotto");
-let scanTentativi = 0;
-let scanVideoInfo = "";
 
 function beepScan() {
   try {
@@ -612,21 +612,36 @@ async function apriModaleScan() {
   formScanProdotto.classList.add("hidden");
   scanInPausa = false;
   scanTentativi = 0;
-  scanDebug.textContent = "";
+  scanDebug.textContent = "starting camera…";
+
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment",
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        advanced: [{ focusMode: "continuous" }],
-      },
+    html5QrCode = new Html5Qrcode("scan-camera-wrap", {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.EAN_8,
+      ],
+      verbose: false,
     });
-    scanVideo.srcObject = scanStream;
-    await scanVideo.play();
-    scanVideoInfo = `video ${scanVideo.videoWidth}x${scanVideo.videoHeight}`;
-    scanDebug.textContent = scanVideoInfo;
-    avviaRilevamento();
+    await html5QrCode.start(
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        qrbox: { width: 280, height: 140 },
+        videoConstraints: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+      },
+      (decodedText) => {
+        if (scanInPausa) return;
+        scanDebug.textContent = `tentativi: ${scanTentativi} · trovato!`;
+        gestisciBarcodeRilevato(decodedText);
+      },
+      () => {
+        if (scanInPausa) return;
+        scanTentativi++;
+        scanDebug.textContent = `tentativi: ${scanTentativi}`;
+      }
+    );
   } catch (e) {
     scanStato.textContent = "Camera access denied or unavailable.";
     scanDebug.textContent = String(e);
@@ -637,60 +652,20 @@ function chiudiModaleScan() {
   modaleScan.classList.add("hidden");
   modaleScan.classList.remove("flex");
   fermaRilevamento();
-  if (scanStream) {
-    scanStream.getTracks().forEach((t) => t.stop());
-    scanStream = null;
-  }
   formScanProdotto.classList.add("hidden");
   formScanProdotto.reset();
 }
 
 function fermaRilevamento() {
-  if (scanIntervalId) {
-    clearInterval(scanIntervalId);
-    scanIntervalId = null;
-  }
-  if (scanZxingReader) {
-    scanZxingReader.reset();
-    scanZxingReader = null;
-  }
-}
-
-function avviaRilevamento() {
-  if (window.BarcodeDetector) {
-    scanBarcodeDetector = new BarcodeDetector({ formats: ["ean_13"] });
-    scanDebug.textContent = "native BarcodeDetector — tentativi: 0";
-    scanIntervalId = setInterval(async () => {
-      if (scanInPausa) return;
-      scanTentativi++;
-      try {
-        const codici = await scanBarcodeDetector.detect(scanVideo);
-        scanDebug.textContent = `${scanVideoInfo} · native BarcodeDetector — tentativi: ${scanTentativi}, ultima: ${codici.length} risultati`;
-        if (codici.length > 0) gestisciBarcodeRilevato(codici[0].rawValue);
-      } catch (e) {
-        scanDebug.textContent = `${scanVideoInfo} · native BarcodeDetector — tentativi: ${scanTentativi}, errore: ${e}`;
-      }
-    }, 400);
-  } else if (window.ZXing) {
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    scanZxingReader = new ZXing.BrowserMultiFormatReader(hints);
-    scanDebug.textContent = "ZXing fallback — tentativi: 0";
-    // We already assign srcObject + play() ourselves above, so the video is already
-    // playing by this point. ZXing's decodeFromVideoElementContinuously() internally
-    // re-waits for a "playing" event before starting the scan loop, which never fires
-    // again (video's already playing) — deadlocking the loop before it starts. Calling
-    // decodeContinuously() directly skips that redundant wait.
-    scanZxingReader.decodeContinuously(scanVideo, (result, err) => {
-      if (scanInPausa) return;
-      scanTentativi++;
-      scanDebug.textContent = `${scanVideoInfo} · ZXing fallback — tentativi: ${scanTentativi}${err ? ", ultimo: " + err.name : ""}`;
-      if (result) gestisciBarcodeRilevato(result.getText());
-    });
-  } else {
-    scanStato.textContent = "Barcode scanning not supported in this browser.";
-    scanDebug.textContent = "no BarcodeDetector, no ZXing";
+  if (html5QrCode) {
+    const reader = html5QrCode;
+    html5QrCode = null;
+    reader
+      .stop()
+      .then(() => reader.clear())
+      .catch(() => {
+        // already stopped or never fully started, ignore
+      });
   }
 }
 
