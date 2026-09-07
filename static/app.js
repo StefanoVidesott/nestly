@@ -582,7 +582,10 @@ let scanInPausa = false;
 const modaleScan = document.getElementById("modal-scan");
 const scanVideo = document.getElementById("scan-video");
 const scanStato = document.getElementById("scan-stato");
+const scanDebug = document.getElementById("scan-debug");
 const formScanProdotto = document.getElementById("form-scan-prodotto");
+let scanTentativi = 0;
+let scanVideoInfo = "";
 
 function beepScan() {
   try {
@@ -608,13 +611,25 @@ async function apriModaleScan() {
   scanStato.classList.remove("hidden");
   formScanProdotto.classList.add("hidden");
   scanInPausa = false;
+  scanTentativi = 0;
+  scanDebug.textContent = "";
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        advanced: [{ focusMode: "continuous" }],
+      },
+    });
     scanVideo.srcObject = scanStream;
     await scanVideo.play();
+    scanVideoInfo = `video ${scanVideo.videoWidth}x${scanVideo.videoHeight}`;
+    scanDebug.textContent = scanVideoInfo;
     avviaRilevamento();
   } catch (e) {
     scanStato.textContent = "Camera access denied or unavailable.";
+    scanDebug.textContent = String(e);
   }
 }
 
@@ -644,17 +659,24 @@ function fermaRilevamento() {
 function avviaRilevamento() {
   if (window.BarcodeDetector) {
     scanBarcodeDetector = new BarcodeDetector({ formats: ["ean_13"] });
+    scanDebug.textContent = "native BarcodeDetector — tentativi: 0";
     scanIntervalId = setInterval(async () => {
       if (scanInPausa) return;
+      scanTentativi++;
       try {
         const codici = await scanBarcodeDetector.detect(scanVideo);
+        scanDebug.textContent = `${scanVideoInfo} · native BarcodeDetector — tentativi: ${scanTentativi}, ultima: ${codici.length} risultati`;
         if (codici.length > 0) gestisciBarcodeRilevato(codici[0].rawValue);
       } catch (e) {
-        // detection frame failed, try again on next tick
+        scanDebug.textContent = `${scanVideoInfo} · native BarcodeDetector — tentativi: ${scanTentativi}, errore: ${e}`;
       }
     }, 400);
   } else if (window.ZXing) {
-    scanZxingReader = new ZXing.BrowserMultiFormatReader();
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    scanZxingReader = new ZXing.BrowserMultiFormatReader(hints);
+    scanDebug.textContent = "ZXing fallback — tentativi: 0";
     // We already assign srcObject + play() ourselves above, so the video is already
     // playing by this point. ZXing's decodeFromVideoElementContinuously() internally
     // re-waits for a "playing" event before starting the scan loop, which never fires
@@ -662,10 +684,13 @@ function avviaRilevamento() {
     // decodeContinuously() directly skips that redundant wait.
     scanZxingReader.decodeContinuously(scanVideo, (result, err) => {
       if (scanInPausa) return;
+      scanTentativi++;
+      scanDebug.textContent = `${scanVideoInfo} · ZXing fallback — tentativi: ${scanTentativi}${err ? ", ultimo: " + err.name : ""}`;
       if (result) gestisciBarcodeRilevato(result.getText());
     });
   } else {
     scanStato.textContent = "Barcode scanning not supported in this browser.";
+    scanDebug.textContent = "no BarcodeDetector, no ZXing";
   }
 }
 
