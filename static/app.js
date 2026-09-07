@@ -655,7 +655,12 @@ function avviaRilevamento() {
     }, 400);
   } else if (window.ZXing) {
     scanZxingReader = new ZXing.BrowserMultiFormatReader();
-    scanZxingReader.decodeFromVideoElementContinuously(scanVideo, (result, err) => {
+    // We already assign srcObject + play() ourselves above, so the video is already
+    // playing by this point. ZXing's decodeFromVideoElementContinuously() internally
+    // re-waits for a "playing" event before starting the scan loop, which never fires
+    // again (video's already playing) — deadlocking the loop before it starts. Calling
+    // decodeContinuously() directly skips that redundant wait.
+    scanZxingReader.decodeContinuously(scanVideo, (result, err) => {
       if (scanInPausa) return;
       if (result) gestisciBarcodeRilevato(result.getText());
     });
