@@ -95,6 +95,15 @@ class AlimentoFrigo(Base):
     luogo = Column(String, nullable=False, default="frigo")  # "frigo" | "freezer"
 
 
+class Prodotto(Base):
+    __tablename__ = "prodotti"
+    barcode = Column(String, primary_key=True, index=True)
+    nome = Column(String, nullable=False)
+    quantita_default = Column(String, nullable=False)
+    scadenza_giorni_default = Column(Integer, nullable=True)
+    luogo_default = Column(String, nullable=False, default="frigo")  # "frigo" | "freezer"
+
+
 class SpesaItem(Base):
     __tablename__ = "spesa"
     id = Column(Integer, primary_key=True, index=True)
@@ -390,6 +399,18 @@ class AlimentoFrigoOut(AlimentoFrigoIn):
 class AlimentoFrigoUpdateIn(BaseModel):
     nome: Optional[str] = None
     quantita: Optional[str] = None
+
+
+class ProdottoIn(BaseModel):
+    barcode: str
+    nome: str
+    quantita_default: str
+    scadenza_giorni_default: Optional[int] = None
+    luogo_default: str = "frigo"
+
+
+class ProdottoOut(ProdottoIn):
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SpesaItemIn(BaseModel):
@@ -787,6 +808,51 @@ def elimina_alimento(item_id: int, db: Session = Depends(get_db), user: User = D
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/prodotti/{barcode}", response_model=ProdottoOut)
+def leggi_prodotto(barcode: str, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("dispensa"))):
+    prodotto = db.query(Prodotto).filter(Prodotto.barcode == barcode).first()
+    if not prodotto:
+        raise HTTPException(404, "Product not found")
+    return prodotto
+
+
+@app.post("/api/prodotti", response_model=ProdottoOut)
+def crea_prodotto(p: ProdottoIn, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("dispensa"))):
+    prodotto = db.query(Prodotto).filter(Prodotto.barcode == p.barcode).first()
+    if prodotto:
+        for campo, valore in p.model_dump().items():
+            setattr(prodotto, campo, valore)
+    else:
+        prodotto = Prodotto(**p.model_dump())
+        db.add(prodotto)
+    db.commit()
+    db.refresh(prodotto)
+    return prodotto
+
+
+@app.post("/api/prodotti/{barcode}/scan", response_model=AlimentoFrigoOut)
+def scansiona_prodotto(barcode: str, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("dispensa"))):
+    prodotto = db.query(Prodotto).filter(Prodotto.barcode == barcode).first()
+    if not prodotto:
+        raise HTTPException(404, "Product not found")
+    scadenza = (
+        date.today() + timedelta(days=prodotto.scadenza_giorni_default)
+        if prodotto.scadenza_giorni_default is not None
+        else None
+    )
+    row = AlimentoFrigo(
+        nome=prodotto.nome,
+        quantita=prodotto.quantita_default,
+        luogo=prodotto.luogo_default,
+        scadenza=scadenza,
+        user_id=user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 # ---------- Lista della spesa (dentro Dispensa & Frigo) ----------

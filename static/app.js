@@ -571,6 +571,187 @@ document.getElementById("form-freezer").addEventListener("submit", async (e) => 
   caricaFrigo();
 });
 
+// ---- Scan barcode ----
+
+let scanStream = null;
+let scanIntervalId = null;
+let scanBarcodeDetector = null;
+let scanZxingReader = null;
+let scanInPausa = false;
+
+const modaleScan = document.getElementById("modal-scan");
+const scanVideo = document.getElementById("scan-video");
+const scanStato = document.getElementById("scan-stato");
+const formScanProdotto = document.getElementById("form-scan-prodotto");
+
+function beepScan() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.value = 0.2;
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+    osc.onended = () => ctx.close();
+  } catch (e) {
+    // audio not available, ignore
+  }
+}
+
+async function apriModaleScan() {
+  modaleScan.classList.remove("hidden");
+  modaleScan.classList.add("flex");
+  scanStato.textContent = "Point the camera at an EAN-13 barcode";
+  scanStato.classList.remove("hidden");
+  formScanProdotto.classList.add("hidden");
+  scanInPausa = false;
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    scanVideo.srcObject = scanStream;
+    await scanVideo.play();
+    avviaRilevamento();
+  } catch (e) {
+    scanStato.textContent = "Camera access denied or unavailable.";
+  }
+}
+
+function chiudiModaleScan() {
+  modaleScan.classList.add("hidden");
+  modaleScan.classList.remove("flex");
+  fermaRilevamento();
+  if (scanStream) {
+    scanStream.getTracks().forEach((t) => t.stop());
+    scanStream = null;
+  }
+  formScanProdotto.classList.add("hidden");
+  formScanProdotto.reset();
+}
+
+function fermaRilevamento() {
+  if (scanIntervalId) {
+    clearInterval(scanIntervalId);
+    scanIntervalId = null;
+  }
+  if (scanZxingReader) {
+    scanZxingReader.reset();
+    scanZxingReader = null;
+  }
+}
+
+function avviaRilevamento() {
+  if (window.BarcodeDetector) {
+    scanBarcodeDetector = new BarcodeDetector({ formats: ["ean_13"] });
+    scanIntervalId = setInterval(async () => {
+      if (scanInPausa) return;
+      try {
+        const codici = await scanBarcodeDetector.detect(scanVideo);
+        if (codici.length > 0) gestisciBarcodeRilevato(codici[0].rawValue);
+      } catch (e) {
+        // detection frame failed, try again on next tick
+      }
+    }, 400);
+  } else if (window.ZXing) {
+    scanZxingReader = new ZXing.BrowserMultiFormatReader();
+    scanZxingReader.decodeFromVideoElement(scanVideo, (result, err) => {
+      if (scanInPausa) return;
+      if (result) gestisciBarcodeRilevato(result.getText());
+    });
+  } else {
+    scanStato.textContent = "Barcode scanning not supported in this browser.";
+  }
+}
+
+async function gestisciBarcodeRilevato(barcode) {
+  if (scanInPausa) return;
+  scanInPausa = true;
+  beepScan();
+  scanStato.textContent = `Scanned: ${barcode}`;
+
+  const res = await fetch(`${API}/prodotti/${barcode}/scan`, { method: "POST" });
+  if (res.ok) {
+    const item = await res.json();
+    const luogoLabel = item.luogo === "freezer" ? "Freezer" : "Fridge";
+    scanStato.textContent = `✓ Added ${item.nome} to ${luogoLabel}`;
+    caricaFrigo();
+    setTimeout(() => {
+      scanStato.textContent = "Point the camera at an EAN-13 barcode";
+      scanInPausa = false;
+    }, 1500);
+    return;
+  }
+
+  if (res.status === 404) {
+    document.getElementById("sp-barcode").value = barcode;
+    document.getElementById("sp-nome").value = "";
+    document.getElementById("sp-quantita").value = "";
+    document.getElementById("sp-giorni").value = "";
+    document.getElementById("sp-luogo").value = "frigo";
+
+    try {
+      const off = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
+      if (off.ok) {
+        const dati = await off.json();
+        if (dati.product && dati.product.product_name) {
+          document.getElementById("sp-nome").value = dati.product.product_name;
+        }
+        if (dati.product && dati.product.quantity) {
+          document.getElementById("sp-quantita").value = dati.product.quantity;
+        }
+      }
+    } catch (e) {
+      // Open Food Facts unavailable, leave fields empty for manual entry
+    }
+
+    scanStato.textContent = "New product — fill in the details";
+    formScanProdotto.classList.remove("hidden");
+    return;
+  }
+
+  scanStato.textContent = "Error while adding product.";
+  scanInPausa = false;
+}
+
+document.getElementById("btn-apri-scan").addEventListener("click", apriModaleScan);
+document.getElementById("scan-chiudi").addEventListener("click", chiudiModaleScan);
+modaleScan.addEventListener("click", (e) => {
+  if (e.target === modaleScan) chiudiModaleScan();
+});
+
+document.getElementById("scan-annulla-prodotto").addEventListener("click", () => {
+  formScanProdotto.classList.add("hidden");
+  formScanProdotto.reset();
+  scanStato.textContent = "Point the camera at an EAN-13 barcode";
+  scanInPausa = false;
+});
+
+formScanProdotto.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const barcode = document.getElementById("sp-barcode").value;
+  const giorni = document.getElementById("sp-giorni").value;
+  const body = {
+    barcode,
+    nome: document.getElementById("sp-nome").value,
+    quantita_default: document.getElementById("sp-quantita").value,
+    scadenza_giorni_default: giorni ? parseInt(giorni, 10) : null,
+    luogo_default: document.getElementById("sp-luogo").value,
+  };
+  await apiSend("/prodotti", "POST", body);
+  const item = await apiSend(`/prodotti/${barcode}/scan`, "POST");
+  const luogoLabel = item.luogo === "freezer" ? "Freezer" : "Fridge";
+
+  formScanProdotto.classList.add("hidden");
+  formScanProdotto.reset();
+  scanStato.textContent = `✓ Added ${item.nome} to ${luogoLabel}`;
+  caricaFrigo();
+  setTimeout(() => {
+    scanStato.textContent = "Point the camera at an EAN-13 barcode";
+    scanInPausa = false;
+  }, 1500);
+});
+
 // ---- Lista della spesa (dentro Dispensa & Frigo) ----
 
 async function caricaListaSpesa() {
