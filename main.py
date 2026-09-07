@@ -1130,9 +1130,16 @@ def elimina_mealplan(item_id: int, db: Session = Depends(get_db), user: User = D
 
 # ---------- STATIC FILES ----------
 
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+class NoCacheStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
 @app.get("/")
 def serve_index():
-    return FileResponse(BASE_DIR / "static" / "index.html")
+    return FileResponse(BASE_DIR / "static" / "index.html", headers={"Cache-Control": "no-cache"})
