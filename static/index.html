@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nestly</title>
+
+<script>
+  if (localStorage.getItem("theme") === "dark" ||
+      (!("theme" in localStorage) && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+    document.documentElement.classList.add("dark");
+  }
+</script>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { darkMode: "class" };
+</script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+
+<!-- Tabulator (Finance tables) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.2.1/dist/css/tabulator.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.2.1/dist/js/tabulator.min.js"></script>
+
+<!-- jsPDF + autotable (required by Tabulator for PDF export) -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.js"></script>
+
+<!-- SheetJS (required by Tabulator for Excel export) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<link rel="icon" href="data:,">
+
+<style>
+  .dark .tabulator { background-color: #1e293b; border-color: #334155; }
+  .dark .tabulator-header { background-color: #0f172a; border-color: #334155; color: #e2e8f0; }
+  .dark .tabulator-col { background-color: #0f172a; border-color: #334155; }
+  .dark .tabulator-row { background-color: #1e293b; color: #e2e8f0; border-color: #334155; }
+  .dark .tabulator-row.tabulator-row-even { background-color: #24314a; }
+  .dark .tabulator-row .tabulator-cell { border-color: #334155; }
+  .dark .tabulator-footer { background-color: #0f172a; border-color: #334155; color: #e2e8f0; }
+</style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 h-screen overflow-hidden transition-colors">
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div id="login-screen" class="h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-6">
+    <div class="flex flex-col items-center gap-2 mb-6">
+      <i class="fa-solid fa-house-chimney text-indigo-600 text-3xl"></i>
+      <h1 class="text-xl font-bold">Nestly</h1>
+    </div>
+    <form id="form-login" class="space-y-3">
+      <input type="text" id="login-username" placeholder="Username" required autocomplete="username" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+      <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+      <button class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+        <i class="fa-solid fa-right-to-bracket"></i> Sign In
+      </button>
+      <p id="login-errore" class="text-sm text-red-500 text-center hidden"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ===== APP (dashboard) ===== -->
+<div id="app-shell" class="hidden flex h-screen">
+
+  <!-- Mobile overlay -->
+  <div id="overlay" class="fixed inset-0 bg-black/50 z-20 hidden md:hidden"></div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-64 -translate-x-full md:translate-x-0 transition-transform duration-200 z-30 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+    <div class="flex items-center gap-3 px-5 py-5 border-b border-slate-200 dark:border-slate-800">
+      <i class="fa-solid fa-house-chimney text-indigo-600 text-2xl"></i>
+      <span class="text-lg font-bold">Nestly</span>
+    </div>
+
+    <nav class="flex-1 px-3 py-4 space-y-1" id="nav-menu"></nav>
+
+    <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-400 flex items-center gap-2">
+      <i class="fa-solid fa-user"></i> <span id="nome-utente"></span>
+    </div>
+    <div class="px-3 pb-4 space-y-1">
+      <button id="theme-toggle" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+        <i class="fa-solid fa-moon w-5 text-center dark:hidden"></i>
+        <i class="fa-solid fa-sun w-5 text-center hidden dark:inline"></i>
+        <span class="dark:hidden">Dark mode</span>
+        <span class="hidden dark:inline">Light mode</span>
+      </button>
+      <button id="btn-logout" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition">
+        <i class="fa-solid fa-right-from-bracket w-5 text-center"></i> Log Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+
+    <!-- Mobile topbar -->
+    <header class="md:hidden flex items-center gap-3 px-4 py-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+      <button id="hamburger" class="text-xl text-slate-600 dark:text-slate-300">
+        <i class="fa-solid fa-bars"></i>
+      </button>
+      <span class="font-bold" id="titolo-mobile">Nestly</span>
+      <span class="text-xs text-slate-400 ml-auto" id="oggi-mobile"></span>
+    </header>
+
+    <main class="flex-1 overflow-y-auto p-4 md:p-8">
+
+      <!-- ===== LAUNDRY ===== -->
+      <section id="section-lavanderia" class="hidden space-y-6">
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold">Laundry</h1>
+          <span class="hidden md:inline text-sm text-slate-400" id="oggi"></span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-calendar-days text-indigo-600"></i> Building Laundry Bookings
+            </h2>
+            <form id="form-lavanderia" class="grid grid-cols-2 gap-3 mb-4">
+              <select id="lav-macchina" class="col-span-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm">
+                <option value="Lavatrice">Washer</option>
+                <option value="Asciugatrice">Dryer</option>
+              </select>
+              <input type="date" id="lav-data" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-2" />
+              <input type="time" id="lav-inizio" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <input type="time" id="lav-fine" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <button class="col-span-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i> Book
+              </button>
+            </form>
+            <div id="lista-lavanderia" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-basket-shopping text-indigo-600"></i> Laundry Basket
+            </h2>
+            <form id="form-bucato" class="flex gap-2 mb-4">
+              <input type="text" id="bucato-nome" placeholder="e.g. Black t-shirts" required class="flex-1 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <select id="bucato-temp" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm">
+                <option value="30">30°C</option>
+                <option value="40">40°C</option>
+                <option value="60">60°C</option>
+              </select>
+              <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i>
+              </button>
+            </form>
+            <div class="grid grid-cols-3 gap-3" id="colonne-bucato"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== ROOM & CLEANING ===== -->
+      <section id="section-stanza" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Room &amp; Cleaning</h1>
+        <div id="lista-igiene" class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-md">
+          <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-plus text-indigo-600"></i> New Reminder
+          </h2>
+          <form id="form-igiene-tipo" class="grid grid-cols-3 gap-2">
+            <input type="text" id="igiene-tipo-nome" placeholder="Name" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-2" />
+            <input type="number" id="igiene-tipo-giorni" placeholder="Days" required min="1" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+            <button class="col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i> Add
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- ===== PANTRY & FRIDGE ===== -->
+      <section id="section-dispensa" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Pantry &amp; Fridge</h1>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-kitchen-set text-indigo-600"></i> Fridge &amp; Pantry
+            </h2>
+            <form id="form-frigo" class="grid grid-cols-3 gap-2 mb-4">
+              <input type="text" id="frigo-nome" placeholder="Food item" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+              <input type="text" id="frigo-quantita" placeholder="Quantity" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+              <input type="date" id="frigo-scadenza" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-1" />
+              <button class="col-span-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i> Add
+              </button>
+            </form>
+            <div id="lista-frigo" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-cart-shopping text-indigo-600"></i> Shopping List
+            </h2>
+            <form id="form-spesa-list" class="flex gap-2 mb-3">
+              <input type="text" id="spesa-list-nome" placeholder="Item" required class="flex-1 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <input type="text" id="spesa-list-quantita" placeholder="Qty" class="w-20 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i>
+              </button>
+            </form>
+            <div id="lista-spesa-list" class="space-y-1 max-h-72 overflow-y-auto"></div>
+          </div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-book-open text-indigo-600"></i> Recipes
+          </h2>
+          <form id="form-recipe" class="space-y-2 mb-4">
+            <input type="text" id="recipe-title" placeholder="Recipe title" required class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <textarea id="recipe-content" placeholder="Ingredients, steps..." required rows="3" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm resize-none"></textarea>
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                <input type="checkbox" id="recipe-shared" class="w-4 h-4 accent-indigo-600" /> Share with household
+              </label>
+              <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i> Add
+              </button>
+            </div>
+          </form>
+          <div id="lista-recipes" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+        </div>
+      </section>
+
+      <!-- ===== FINANCE & EXPENSES ===== -->
+      <section id="section-finanza" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Finance &amp; Expenses</h1>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 lg:col-span-2">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-receipt text-indigo-600"></i> New Expense
+            </h2>
+            <form id="form-spesa-finanza" class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <input type="date" id="fin-data" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-2 md:col-span-1" />
+              <input type="number" step="0.01" min="0" id="fin-importo" placeholder="Amount" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <select id="fin-valuta" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm">
+                <option value="NOK">NOK</option>
+                <option value="EUR">EUR</option>
+              </select>
+              <input type="text" id="fin-categoria" placeholder="Category" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <input type="text" id="fin-descrizione" placeholder="Description" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm col-span-2 md:col-span-3" />
+              <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+                <i class="fa-solid fa-plus"></i> Add
+              </button>
+            </form>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-right-left text-indigo-600"></i> NOK / EUR Converter
+            </h2>
+            <div class="space-y-2">
+              <div class="flex gap-2">
+                <input type="number" id="conv-input" placeholder="Amount" class="flex-1 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" value="100" />
+                <select id="conv-valuta" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm">
+                  <option value="NOK_EUR">NOK → EUR</option>
+                  <option value="EUR_NOK">EUR → NOK</option>
+                </select>
+              </div>
+              <div class="text-2xl font-bold text-indigo-600" id="conv-risultato">—</div>
+              <p class="text-xs text-slate-400" id="conv-tasso"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+          <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+              <i class="fa-solid fa-table-list text-indigo-600"></i> Expense History
+            </h2>
+            <div class="flex flex-wrap items-end gap-2">
+              <div>
+                <label class="block text-xs text-slate-400 mb-1">From date</label>
+                <input type="date" id="fin-filtro-da" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label class="block text-xs text-slate-400 mb-1">To date</label>
+                <input type="date" id="fin-filtro-a" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-1.5 text-sm" />
+              </div>
+              <button id="btn-filtra-spese" class="bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-lg px-4 py-1.5 text-sm font-medium transition">
+                <i class="fa-solid fa-filter"></i> Filter
+              </button>
+              <button id="btn-esporta-pdf" class="bg-red-600 hover:bg-red-700 text-white rounded-lg px-4 py-1.5 text-sm font-medium transition">
+                <i class="fa-solid fa-file-pdf"></i> Export PDF
+              </button>
+              <button id="btn-esporta-excel" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-1.5 text-sm font-medium transition">
+                <i class="fa-solid fa-file-excel"></i> Export Excel
+              </button>
+            </div>
+          </div>
+          <div id="tabella-spese"></div>
+        </div>
+      </section>
+
+      <!-- ===== ADMIN ===== -->
+      <section id="section-admin" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Admin Settings</h1>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-2xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-user-plus text-indigo-600"></i> Create New User
+          </h2>
+          <form id="form-nuovo-utente" class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <input type="text" id="nu-username" placeholder="Username" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+              <input type="password" id="nu-password" placeholder="Password" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <select id="nu-role" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm">
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+            <div>
+              <p class="text-xs text-slate-400 mb-2">Accessible modules</p>
+              <div class="flex flex-wrap gap-3" id="nu-moduli"></div>
+            </div>
+            <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i> Create User
+            </button>
+            <p id="nu-errore" class="text-sm text-red-500 hidden"></p>
+          </form>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-2xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-users text-indigo-600"></i> Existing Users
+          </h2>
+          <div id="lista-utenti" class="space-y-2"></div>
+        </div>
+      </section>
+
+      <!-- ===== KANBAN ===== -->
+      <section id="section-kanban" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Kanban</h1>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+          <form id="form-kanban" class="flex flex-wrap gap-2">
+            <input type="text" id="kanban-titolo" placeholder="Task title" required class="flex-1 min-w-[140px] border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <input type="text" id="kanban-desc" placeholder="Description (optional)" class="flex-1 min-w-[140px] border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i> Add
+            </button>
+          </form>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-4">
+            <h2 class="text-sm font-semibold mb-3 flex items-center gap-2 text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+              <i class="fa-solid fa-inbox"></i> To Do
+            </h2>
+            <div class="kanban-dropzone space-y-2 min-h-[200px] rounded-lg transition-colors p-1" data-status="todo" id="kanban-col-todo"></div>
+          </div>
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-4">
+            <h2 class="text-sm font-semibold mb-3 flex items-center gap-2 text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+              <i class="fa-solid fa-spinner"></i> In Progress
+            </h2>
+            <div class="kanban-dropzone space-y-2 min-h-[200px] rounded-lg transition-colors p-1" data-status="doing" id="kanban-col-doing"></div>
+          </div>
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-4">
+            <h2 class="text-sm font-semibold mb-3 flex items-center gap-2 text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+              <i class="fa-solid fa-check-double"></i> Done
+            </h2>
+            <div class="kanban-dropzone space-y-2 min-h-[200px] rounded-lg transition-colors p-1" data-status="done" id="kanban-col-done"></div>
+          </div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-list-check text-indigo-600"></i> Todo List
+          </h2>
+          <form id="form-todo" class="flex gap-2 mb-3">
+            <input type="text" id="todo-testo" placeholder="New item" required class="flex-1 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </form>
+          <div id="lista-todo" class="space-y-1 max-h-72 overflow-y-auto"></div>
+        </div>
+      </section>
+
+      <!-- ===== BUCKET LIST ===== -->
+      <section id="section-bucketlist" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Bucket List</h1>
+        <p class="text-sm text-slate-400 -mt-4">Shared list: all users can see and edit it together.</p>
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl">
+          <form id="form-bucketlist" class="flex gap-2 mb-3">
+            <input type="text" id="bucketlist-testo" placeholder="What do you want to do?" required class="flex-1 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <button class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </form>
+          <div id="lista-bucketlist" class="max-h-96 overflow-y-auto"></div>
+        </div>
+      </section>
+
+      <!-- ===== TRANSPORT ===== -->
+      <section id="section-trondheim" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Trondheim</h1>
+        <p class="text-sm text-slate-400 -mt-4">Bus departures, aurora forecast, weather and daylight for Trondheim.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-bus text-indigo-600"></i> Valgrindvegen <span class="text-xs font-normal text-slate-400">(lines 10, 18)</span>
+            </h2>
+            <div id="trasporti-valgrindvegen">
+              <p class="text-sm text-slate-400">Loading…</p>
+            </div>
+          </div>
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-bus text-indigo-600"></i> Valøyvegen
+            </h2>
+            <div id="trasporti-valoyvegen">
+              <p class="text-sm text-slate-400">Loading…</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-wand-sparkles text-indigo-600"></i> Aurora (Kp index)
+              <span class="relative group cursor-help ml-auto">
+                <i class="fa-solid fa-circle-info text-slate-400"></i>
+                <div class="hidden group-hover:block absolute z-20 right-0 top-6 w-64 text-xs bg-slate-800 text-white rounded-lg p-2.5 shadow-lg font-normal leading-relaxed">
+                  The Kp index (0–9) measures geomagnetic activity. At Trondheim's latitude (~63°N), aurora is often visible on clear dark nights starting around Kp 2–3; from Kp 5 (storm level) displays get brighter and move more overhead.
+                </div>
+              </span>
+            </h2>
+            <div id="kp-attuale" class="flex items-center gap-3 mb-4">
+              <p class="text-sm text-slate-400">Loading…</p>
+            </div>
+            <div id="kp-forecast" class="space-y-1.5"></div>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-cloud-sun text-indigo-600"></i> Weather
+            </h2>
+            <div id="meteo-attuale" class="mb-4">
+              <p class="text-sm text-slate-400">Loading…</p>
+            </div>
+            <div id="meteo-forecast" class="space-y-1.5"></div>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-sun text-indigo-600"></i> Daylight
+            </h2>
+            <div id="luce-diurna">
+              <p class="text-sm text-slate-400">Loading…</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== BOOKMARKS & RESOURCES ===== -->
+      <section id="section-bookmark" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Bookmarks &amp; Resources</h1>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-2xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-bookmark text-indigo-600"></i> New Bookmark
+          </h2>
+          <form id="form-bookmark" class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input type="text" id="bk-title" placeholder="Name" required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <input type="url" id="bk-url" placeholder="https://..." required class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm md:col-span-2" />
+            <input type="text" id="bk-category" placeholder="Category" required list="bk-categorie-esistenti" class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+            <datalist id="bk-categorie-esistenti"></datalist>
+            <button class="md:col-span-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i> Add
+            </button>
+          </form>
+        </div>
+
+        <div id="lista-bookmark" class="space-y-6 max-w-3xl"></div>
+      </section>
+
+      <!-- ===== KITCHEN & MEAL PLAN ===== -->
+      <section id="section-mealplan" class="hidden space-y-8">
+        <h1 class="text-2xl font-bold">Kitchen &amp; Meal Plan</h1>
+
+        <div>
+          <h2 class="text-lg font-semibold mb-3 flex items-center gap-2 text-red-600 dark:text-red-400">
+            <i class="fa-solid fa-triangle-exclamation"></i> Anti-Waste Alert
+          </h2>
+          <div id="allerta-antispreco" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+        </div>
+
+        <div>
+          <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+            <i class="fa-solid fa-calendar-week text-indigo-600"></i> Weekly Planner
+          </h2>
+          <div id="griglia-mealplan" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ===== EDIT USER MODAL ===== -->
+<div id="modal-edit-utente" class="hidden fixed inset-0 z-40 bg-black/50 items-center justify-center px-4">
+  <div class="w-full max-w-md bg-white dark:bg-slate-900 rounded-xl shadow-lg p-6">
+    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+      <i class="fa-solid fa-user-pen text-indigo-600"></i> Edit User
+    </h3>
+    <form id="form-modifica-utente" class="space-y-3">
+      <input type="hidden" id="eu-id" />
+      <input type="text" id="eu-username" required placeholder="Username" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+      <input type="password" id="eu-password" placeholder="New password (leave empty to keep current)" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm" />
+      <select id="eu-role" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm">
+        <option value="user">User</option>
+        <option value="admin">Admin</option>
+      </select>
+      <div>
+        <p class="text-xs text-slate-400 mb-2">Accessible modules</p>
+        <div class="flex flex-wrap gap-3" id="eu-moduli"></div>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" id="eu-annulla" class="px-4 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700">Cancel</button>
+        <button class="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium">Save</button>
+      </div>
+      <p id="eu-errore" class="text-sm text-red-500 hidden"></p>
+    </form>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
