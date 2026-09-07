@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Barcode scan test (isolated)</title>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 12px; }
+  #reader { width: 100%; max-width: 480px; }
+  #result { font-family: monospace; font-size: 18px; margin-top: 10px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h3>Isolated scan test — no app CSS, no modal</h3>
+<div id="reader"></div>
+<div id="result">starting…</div>
+<script>
+  const resultEl = document.getElementById("result");
+  let tentativi = 0;
+  const html5QrCode = new Html5Qrcode("reader", {
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.EAN_8,
+    ],
+    verbose: false,
+  });
+  html5QrCode
+    .start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 280, height: 140 } },
+      (decodedText) => {
+        resultEl.textContent = "TROVATO: " + decodedText;
+      },
+      () => {
+        tentativi++;
+        const v = document.querySelector("#reader video");
+        const info = v ? `real ${v.videoWidth}x${v.videoHeight}` : "no video";
+        resultEl.textContent = `${info} · tentativi: ${tentativi}`;
+      }
+    )
+    .catch((e) => {
+      resultEl.textContent = "ERRORE START: " + e;
+    });
+</script>
+</body>
+</html>

@@ -633,19 +633,25 @@ async function apriModaleScan() {
       },
       (decodedText) => {
         if (scanInPausa) return;
-        scanDebug.textContent = `tentativi: ${scanTentativi} · trovato!`;
+        scanDebug.textContent = `${scanVideoInfo()} · tentativi: ${scanTentativi} · trovato!`;
         gestisciBarcodeRilevato(decodedText);
       },
       () => {
         if (scanInPausa) return;
         scanTentativi++;
-        scanDebug.textContent = `tentativi: ${scanTentativi}`;
+        scanDebug.textContent = `${scanVideoInfo()} · tentativi: ${scanTentativi}`;
       }
     );
   } catch (e) {
     scanStato.textContent = "Camera access denied or unavailable.";
     scanDebug.textContent = String(e);
   }
+}
+
+function scanVideoInfo() {
+  const v = document.querySelector("#scan-camera-wrap video");
+  if (!v) return "video: n/a";
+  return `real ${v.videoWidth}x${v.videoHeight} · shown ${Math.round(v.clientWidth)}x${Math.round(v.clientHeight)}`;
 }
 
 function chiudiModaleScan() {
