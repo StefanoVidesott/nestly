@@ -571,6 +571,23 @@ class PulizieRoommateOut(BaseModel):
     ordine: int
 
 
+class PulizieSettimanaOut(BaseModel):
+    settimana_idx: int
+    inizio: date
+    assegnato_user_id: int
+    assegnato_username: str
+    completato: bool
+    completato_il: Optional[datetime] = None
+    richiesta_pendente: Optional["PulizieSwapOut"] = None
+
+
+class PulizieSwapOut(BaseModel):
+    id: int
+
+
+PulizieSettimanaOut.model_rebuild()
+
+
 IGIENE_TIPI_DEFAULT = {"cleaning": 7, "towels": 7, "sheets": 14}
 
 app = FastAPI(title="Nestly")
@@ -1307,6 +1324,51 @@ def imposta_roommate_pulizie(dati: PulizieRoommateIn, db: Session = Depends(get_
         .all()
     )
     return [PulizieRoommateOut(user_id=u.id, username=u.username, ordine=r.ordine) for r, u in righe]
+
+
+@app.get("/api/pulizie/settimane", response_model=list[PulizieSettimanaOut])
+def lista_settimane_pulizie(settimane: int = 4, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    settimane = max(1, min(settimane, 26))
+    oggi_idx = settimana_idx(date.today())
+    risultato = []
+    for offset in range(settimane):
+        idx = oggi_idx + offset
+        riga = assicura_settimana(db, idx)
+        if not riga:
+            break
+        assegnato = db.query(User).get(riga.assegnato_user_id)
+        risultato.append(PulizieSettimanaOut(
+            settimana_idx=idx,
+            inizio=data_settimana(idx),
+            assegnato_user_id=assegnato.id,
+            assegnato_username=assegnato.username,
+            completato=riga.completato,
+            completato_il=riga.completato_il,
+        ))
+    return risultato
+
+
+@app.post("/api/pulizie/settimane/{idx}/completa", response_model=PulizieSettimanaOut)
+def completa_settimana_pulizie(idx: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    riga = assicura_settimana(db, idx)
+    if not riga:
+        raise HTTPException(404, "No roommates configured")
+    if riga.assegnato_user_id != user.id:
+        raise HTTPException(403, "Not your turn this week")
+    if not riga.completato:
+        riga.completato = True
+        riga.completato_il = datetime.utcnow()
+        db.commit()
+        db.refresh(riga)
+    assegnato = db.query(User).get(riga.assegnato_user_id)
+    return PulizieSettimanaOut(
+        settimana_idx=idx,
+        inizio=data_settimana(idx),
+        assegnato_user_id=assegnato.id,
+        assegnato_username=assegnato.username,
+        completato=riga.completato,
+        completato_il=riga.completato_il,
+    )
 
 
 # ---------- STATIC FILES ----------
