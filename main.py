@@ -27,7 +27,7 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24 * 7
 COOKIE_NAME = "session_token"
 
-MODULI = ["lavanderia", "stanza", "dispensa", "finanza", "kanban", "bucketlist", "trondheim", "bookmark", "mealplan"]
+MODULI = ["lavanderia", "stanza", "dispensa", "finanza", "kanban", "bucketlist", "trondheim", "bookmark", "mealplan", "pulizie"]
 
 
 def get_db():
@@ -179,6 +179,44 @@ class MealPlan(Base):
     __table_args__ = (UniqueConstraint("user_id", "data", "meal_type", name="uq_mealplan_utente_data_tipo"),)
 
 
+class PulizieRoommate(Base):
+    __tablename__ = "pulizie_roommate"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("utenti.id"), nullable=False, unique=True, index=True)
+    ordine = Column(Integer, nullable=False)
+
+
+class PulizieSettimana(Base):
+    __tablename__ = "pulizie_settimana"
+    id = Column(Integer, primary_key=True, index=True)
+    settimana_idx = Column(Integer, nullable=False, unique=True, index=True)
+    assegnato_user_id = Column(Integer, ForeignKey("utenti.id"), nullable=False)
+    completato = Column(Boolean, nullable=False, default=False)
+    completato_il = Column(DateTime, nullable=True)
+
+
+class PulizieSwapRichiesta(Base):
+    __tablename__ = "pulizie_swap_richiesta"
+    id = Column(Integer, primary_key=True, index=True)
+    settimana_idx = Column(Integer, nullable=False, index=True)
+    richiedente_id = Column(Integer, ForeignKey("utenti.id"), nullable=False)
+    target_id = Column(Integer, ForeignKey("utenti.id"), nullable=False)
+    stato = Column(String, nullable=False, default="in_attesa")  # in_attesa | accettata | rifiutata | annullata
+    creato_il = Column(DateTime, nullable=False, default=datetime.utcnow)
+    risposto_il = Column(DateTime, nullable=True)
+
+
+EPOCA_PULIZIE = date(2020, 1, 6)  # un lunedì, punto di riferimento fisso per la rotazione
+
+
+def settimana_idx(d: date) -> int:
+    return (d - EPOCA_PULIZIE).days // 7
+
+
+def data_settimana(idx: int) -> date:
+    return EPOCA_PULIZIE + timedelta(weeks=idx)
+
+
 Base.metadata.create_all(bind=engine)
 
 # Lightweight auto-migration: add columns introduced after initial deploy
@@ -218,6 +256,31 @@ def moduli_utente(user: User) -> list[str]:
     if user.role == "admin":
         return list(MODULI)
     return [m for m in user.allowed_modules.split(",") if m]
+
+
+def roommate_ordinati(db: Session) -> list[User]:
+    righe = (
+        db.query(PulizieRoommate, User)
+        .join(User, User.id == PulizieRoommate.user_id)
+        .order_by(PulizieRoommate.ordine)
+        .all()
+    )
+    return [u for _, u in righe]
+
+
+def assicura_settimana(db: Session, idx: int) -> Optional[PulizieSettimana]:
+    riga = db.query(PulizieSettimana).filter(PulizieSettimana.settimana_idx == idx).first()
+    if riga:
+        return riga
+    roommate = roommate_ordinati(db)
+    if not roommate:
+        return None
+    assegnato = roommate[idx % len(roommate)]
+    riga = PulizieSettimana(settimana_idx=idx, assegnato_user_id=assegnato.id)
+    db.add(riga)
+    db.commit()
+    db.refresh(riga)
+    return riga
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
