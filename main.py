@@ -561,6 +561,16 @@ class ExpenseOut(ExpenseIn):
     id: int
 
 
+class PulizieRoommateIn(BaseModel):
+    user_ids: list[int]
+
+
+class PulizieRoommateOut(BaseModel):
+    user_id: int
+    username: str
+    ordine: int
+
+
 IGIENE_TIPI_DEFAULT = {"cleaning": 7, "towels": 7, "sheets": 14}
 
 app = FastAPI(title="Nestly")
@@ -1264,6 +1274,39 @@ def elimina_mealplan(item_id: int, db: Session = Depends(get_db), user: User = D
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+# ---------- 11. PULIZIE ----------
+
+@app.get("/api/pulizie/roommate", response_model=list[PulizieRoommateOut])
+def lista_roommate_pulizie(db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    righe = (
+        db.query(PulizieRoommate, User)
+        .join(User, User.id == PulizieRoommate.user_id)
+        .order_by(PulizieRoommate.ordine)
+        .all()
+    )
+    return [PulizieRoommateOut(user_id=u.id, username=u.username, ordine=r.ordine) for r, u in righe]
+
+
+@app.put("/api/pulizie/roommate", response_model=list[PulizieRoommateOut])
+def imposta_roommate_pulizie(dati: PulizieRoommateIn, db: Session = Depends(get_db), admin: User = Depends(richiedi_admin)):
+    if len(dati.user_ids) != len(set(dati.user_ids)):
+        raise HTTPException(400, "Duplicate user in list")
+    utenti_validi = {u.id for u in db.query(User).filter(User.id.in_(dati.user_ids)).all()}
+    if len(utenti_validi) != len(dati.user_ids):
+        raise HTTPException(400, "Unknown user in list")
+    db.query(PulizieRoommate).delete()
+    for posizione, uid in enumerate(dati.user_ids):
+        db.add(PulizieRoommate(user_id=uid, ordine=posizione))
+    db.commit()
+    righe = (
+        db.query(PulizieRoommate, User)
+        .join(User, User.id == PulizieRoommate.user_id)
+        .order_by(PulizieRoommate.ordine)
+        .all()
+    )
+    return [PulizieRoommateOut(user_id=u.id, username=u.username, ordine=r.ordine) for r, u in righe]
 
 
 # ---------- STATIC FILES ----------
