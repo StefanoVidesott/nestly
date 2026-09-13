@@ -598,6 +598,16 @@ class PulizieSwapOut(BaseModel):
     creato_il: datetime
 
 
+class PulizieStatOut(BaseModel):
+    user_id: int
+    username: str
+    turni_assegnati_totali: int
+    turni_completati: int
+    swap_richiesti: int
+    swap_accettati_dati: int
+    swap_accettati_ricevuti: int
+
+
 PulizieSettimanaOut.model_rebuild()
 
 
@@ -1501,6 +1511,40 @@ def completa_settimana_pulizie(idx: int, db: Session = Depends(get_db), user: Us
         completato=riga.completato,
         completato_il=riga.completato_il,
     )
+
+
+@app.get("/api/pulizie/stats", response_model=list[PulizieStatOut])
+def stats_pulizie(db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    oggi_idx = settimana_idx(date.today())
+    risultato = []
+    for u in roommate_ordinati(db):
+        turni_assegnati = db.query(PulizieSettimana).filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.settimana_idx == oggi_idx).count()
+        turni_completati = (
+            db.query(PulizieSettimana)
+            .filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.completato == True, PulizieSettimana.settimana_idx <= oggi_idx)  # noqa: E712
+            .count()
+        )
+        swap_richiesti = db.query(PulizieSwapRichiesta).filter(PulizieSwapRichiesta.richiedente_id == u.id).count()
+        swap_dati = (
+            db.query(PulizieSwapRichiesta)
+            .filter(PulizieSwapRichiesta.richiedente_id == u.id, PulizieSwapRichiesta.stato == "accettata")
+            .count()
+        )
+        swap_ricevuti = (
+            db.query(PulizieSwapRichiesta)
+            .filter(PulizieSwapRichiesta.target_id == u.id, PulizieSwapRichiesta.stato == "accettata")
+            .count()
+        )
+        risultato.append(PulizieStatOut(
+            user_id=u.id,
+            username=u.username,
+            turni_assegnati_totali=turni_assegnati,
+            turni_completati=turni_completati,
+            swap_richiesti=swap_richiesti,
+            swap_accettati_dati=swap_dati,
+            swap_accettati_ricevuti=swap_ricevuti,
+        ))
+    return risultato
 
 
 # ---------- STATIC FILES ----------
