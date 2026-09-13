@@ -46,3 +46,31 @@ def test_stats_reflect_assignments_completions_and_swaps(client, admin_client):
     assert stats[target_username]["swap_accettati_ricevuti"] == 1
     assert stats[target_username]["turni_assegnati_totali"] == 1
     assert stats[target_username]["turni_completati"] == 1
+
+
+def test_stats_includes_past_weeks(admin_client, db):
+    from datetime import date
+    import main
+
+    _configura_roommate(admin_client, ["alice", "bob"])
+
+    # Get the current week index
+    oggi_idx = main.settimana_idx(date.today())
+    past_idx = oggi_idx - 1
+
+    # Get alice's user ID
+    alice_id = [r for r in admin_client.get("/api/pulizie/roommate").json() if r["username"] == "alice"][0]["user_id"]
+
+    # Directly create a past week assignment for alice, both assigned and completed
+    past_week = main.PulizieSettimana(settimana_idx=past_idx, assegnato_user_id=alice_id, completato=True)
+    db.add(past_week)
+    db.commit()
+
+    # Get stats
+    stats = {s["username"]: s for s in admin_client.get("/api/pulizie/stats").json()}
+
+    # Verify alice's past week is counted in both assigned and completed totals
+    # alice should have at least 1 assigned (the past week)
+    assert stats["alice"]["turni_assegnati_totali"] >= 1, "Past assigned week should be counted in totals"
+    # alice should have at least 1 completed (the past completed week)
+    assert stats["alice"]["turni_completati"] >= 1, "Past completed week should be counted in totals"

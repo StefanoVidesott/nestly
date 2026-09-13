@@ -1518,7 +1518,7 @@ def stats_pulizie(db: Session = Depends(get_db), user: User = Depends(richiedi_m
     oggi_idx = settimana_idx(date.today())
     risultato = []
     for u in roommate_ordinati(db):
-        turni_assegnati = db.query(PulizieSettimana).filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.settimana_idx == oggi_idx).count()
+        turni_assegnati = db.query(PulizieSettimana).filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.settimana_idx <= oggi_idx).count()
         turni_completati = (
             db.query(PulizieSettimana)
             .filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.completato == True, PulizieSettimana.settimana_idx <= oggi_idx)  # noqa: E712
