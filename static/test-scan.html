@@ -3,47 +3,53 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Barcode scan test (isolated)</title>
-<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<title>Barcode scan test (isolated, ZBar-WASM)</title>
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.9.16/dist/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/barcode-detector-polyfill@0.9.23/dist/index.js"></script>
 <style>
   body { font-family: sans-serif; margin: 0; padding: 12px; }
-  #reader { width: 100%; max-width: 480px; }
+  video { width: 100%; max-width: 480px; background: #000; }
   #result { font-family: monospace; font-size: 18px; margin-top: 10px; white-space: pre-wrap; }
 </style>
 </head>
 <body>
-<h3>Isolated scan test — no app CSS, no modal</h3>
-<div id="reader"></div>
+<h3>Isolated scan test — ZBar-WASM engine, no app CSS/modal</h3>
+<video id="v" playsinline muted autoplay></video>
 <div id="result">starting…</div>
 <script>
   const resultEl = document.getElementById("result");
+  const video = document.getElementById("v");
   let tentativi = 0;
-  const html5QrCode = new Html5Qrcode("reader", {
-    formatsToSupport: [
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.EAN_8,
-    ],
-    verbose: false,
-  });
-  html5QrCode
-    .start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 280, height: 140 } },
-      (decodedText) => {
-        resultEl.textContent = "TROVATO: " + decodedText;
-      },
-      () => {
-        tentativi++;
-        const v = document.querySelector("#reader video");
-        const info = v ? `real ${v.videoWidth}x${v.videoHeight}` : "no video";
-        resultEl.textContent = `${info} · tentativi: ${tentativi}`;
-      }
-    )
-    .catch((e) => {
-      resultEl.textContent = "ERRORE START: " + e;
+
+  async function start() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
     });
+    video.srcObject = stream;
+    await video.play();
+
+    const engine = window.BarcodeDetector ? "native" : "zbar-wasm";
+    const detector = window.BarcodeDetector
+      ? new BarcodeDetector({ formats: ["ean_13", "upc_a", "upc_e", "ean_8"] })
+      : new barcodeDetectorPolyfill.BarcodeDetectorPolyfill({ formats: ["ean_13", "upc_a", "upc_e", "ean_8"] });
+
+    setInterval(async () => {
+      tentativi++;
+      try {
+        const codes = await detector.detect(video);
+        resultEl.textContent = `${engine} · ${video.videoWidth}x${video.videoHeight} · tentativi: ${tentativi} · risultati: ${codes.length}`;
+        if (codes.length > 0) {
+          resultEl.textContent = "TROVATO: " + codes[0].rawValue;
+        }
+      } catch (e) {
+        resultEl.textContent = `${engine} · tentativi: ${tentativi} · errore: ${e}`;
+      }
+    }, 300);
+  }
+
+  start().catch((e) => {
+    resultEl.textContent = "ERRORE START: " + e;
+  });
 </script>
 </body>
 </html>

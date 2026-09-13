@@ -572,17 +572,25 @@ document.getElementById("form-freezer").addEventListener("submit", async (e) => 
 });
 
 // ---- Scan barcode ----
-// Uses html5-qrcode instead of raw BarcodeDetector/ZXing: it manages its own
-// <video>/<canvas> inside #scan-camera-wrap and, crucially, only decodes a
-// cropped center "qrbox" region instead of the full raw frame — full-frame
-// decoding on a 1920x1080 image was the reason plain ZXing never found a
-// real barcode despite thousands of attempts.
+// Prefers the native BarcodeDetector API; when unavailable, falls back to a
+// ZBar-WASM-backed polyfill (@undecaf/barcode-detector-polyfill) that implements
+// the identical BarcodeDetector interface. ZBar is a genuinely different decode
+// engine than ZXing — ZXing (both raw and via html5-qrcode) reliably failed to
+// read real barcodes in testing despite correct resolution/focus/crop, while
+// Google Lens read the same barcode instantly, pointing at the JS decode engine
+// itself rather than our camera/capture code.
 
+let scanStream = null;
+let scanIntervalId = null;
+let scanDetector = null;
+let scanMotore = "";
 let scanInPausa = false;
 let scanTentativi = 0;
-let html5QrCode = null;
+
+const FORMATI_BARCODE = ["ean_13", "upc_a", "upc_e", "ean_8"];
 
 const modaleScan = document.getElementById("modal-scan");
+const scanVideo = document.getElementById("scan-video");
 const scanStato = document.getElementById("scan-stato");
 const scanDebug = document.getElementById("scan-debug");
 const formScanProdotto = document.getElementById("form-scan-prodotto");
@@ -612,67 +620,69 @@ async function apriModaleScan() {
   formScanProdotto.classList.add("hidden");
   scanInPausa = false;
   scanTentativi = 0;
-  scanDebug.textContent = "starting camera…";
+  scanDebug.textContent = "";
 
   try {
-    html5QrCode = new Html5Qrcode("scan-camera-wrap", {
-      formatsToSupport: [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-        Html5QrcodeSupportedFormats.EAN_8,
-      ],
-      verbose: false,
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
     });
-    await html5QrCode.start(
-      { facingMode: "environment" },
-      {
-        fps: 10,
-        qrbox: { width: 280, height: 140 },
-        videoConstraints: { width: { ideal: 1920 }, height: { ideal: 1080 } },
-      },
-      (decodedText) => {
-        if (scanInPausa) return;
-        scanDebug.textContent = `${scanVideoInfo()} · tentativi: ${scanTentativi} · trovato!`;
-        gestisciBarcodeRilevato(decodedText);
-      },
-      () => {
-        if (scanInPausa) return;
-        scanTentativi++;
-        scanDebug.textContent = `${scanVideoInfo()} · tentativi: ${scanTentativi}`;
-      }
-    );
+    scanVideo.srcObject = scanStream;
+    await scanVideo.play();
+
+    if (window.BarcodeDetector) {
+      scanDetector = new BarcodeDetector({ formats: FORMATI_BARCODE });
+      scanMotore = "native";
+    } else if (window.barcodeDetectorPolyfill) {
+      scanDetector = new barcodeDetectorPolyfill.BarcodeDetectorPolyfill({ formats: FORMATI_BARCODE });
+      scanMotore = "zbar-wasm";
+    } else {
+      scanStato.textContent = "Barcode scanning not supported in this browser.";
+      return;
+    }
+
+    avviaRilevamento();
   } catch (e) {
     scanStato.textContent = "Camera access denied or unavailable.";
     scanDebug.textContent = String(e);
   }
 }
 
-function scanVideoInfo() {
-  const v = document.querySelector("#scan-camera-wrap video");
-  if (!v) return "video: n/a";
-  return `real ${v.videoWidth}x${v.videoHeight} · shown ${Math.round(v.clientWidth)}x${Math.round(v.clientHeight)}`;
+function avviaRilevamento() {
+  scanIntervalId = setInterval(async () => {
+    if (scanInPausa) return;
+    scanTentativi++;
+    try {
+      const codici = await scanDetector.detect(scanVideo);
+      scanDebug.textContent = `${scanMotore} · ${scanVideo.videoWidth}x${scanVideo.videoHeight} · tentativi: ${scanTentativi} · risultati: ${codici.length}`;
+      if (codici.length > 0) gestisciBarcodeRilevato(codici[0].rawValue);
+    } catch (e) {
+      scanDebug.textContent = `${scanMotore} · tentativi: ${scanTentativi} · errore: ${e}`;
+    }
+  }, 300);
 }
 
 function chiudiModaleScan() {
   modaleScan.classList.add("hidden");
   modaleScan.classList.remove("flex");
   fermaRilevamento();
+  if (scanStream) {
+    scanStream.getTracks().forEach((t) => t.stop());
+    scanStream = null;
+  }
   formScanProdotto.classList.add("hidden");
   formScanProdotto.reset();
 }
 
 function fermaRilevamento() {
-  if (html5QrCode) {
-    const reader = html5QrCode;
-    html5QrCode = null;
-    reader
-      .stop()
-      .then(() => reader.clear())
-      .catch(() => {
-        // already stopped or never fully started, ignore
-      });
+  if (scanIntervalId) {
+    clearInterval(scanIntervalId);
+    scanIntervalId = null;
   }
+  scanDetector = null;
 }
 
 async function gestisciBarcodeRilevato(barcode) {
