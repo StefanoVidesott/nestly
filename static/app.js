@@ -95,6 +95,7 @@ const MODULO_META = {
   trondheim: { label: "Trondheim", icon: "fa-city" },
   bookmark: { label: "Bookmarks & Resources", icon: "fa-bookmark" },
   mealplan: { label: "Kitchen & Meal Plan", icon: "fa-utensils" },
+  pulizie: { label: "Chores", icon: "fa-arrows-rotate" },
 };
 
 const CARICATORI_MODULO = {
@@ -107,6 +108,7 @@ const CARICATORI_MODULO = {
   trondheim: [avviaTrasporti, caricaKp, caricaMeteo],
   bookmark: [caricaBookmark],
   mealplan: [caricaAntiSpreco, caricaGrigliaMealPlan],
+  pulizie: [caricaPulizie],
 };
 
 function renderModuliCheckbox(container, selezionati = []) {
@@ -151,6 +153,7 @@ const TITOLI = {
   finanza: "Finance & Expenses", admin: "Admin Settings",
   kanban: "Kanban", bucketlist: "Bucket List", trondheim: "Trondheim",
   bookmark: "Bookmarks & Resources", mealplan: "Kitchen & Meal Plan",
+  pulizie: "Chores",
 };
 
 function attivaVoceNav(target) {
@@ -1703,4 +1706,187 @@ async function caricaGrigliaMealPlan() {
       mappaVoci[chiave] = salvato;
     });
   });
+}
+
+// ================= 10. PULIZIE (chore rotation) =================
+
+let pulizieRoommateCache = [];
+
+async function caricaPulizie() {
+  await caricaPulizieRoommate();
+  await Promise.all([caricaPulizieSettimane(), caricaPulizieSwapRichieste(), caricaPulizieStats()]);
+}
+
+async function caricaPulizieRoommate() {
+  pulizieRoommateCache = await apiGet("/pulizie/roommate");
+  if (currentUser.role === "admin") {
+    document.getElementById("pulizie-admin").classList.remove("hidden");
+    await renderPulizieAdmin();
+  }
+}
+
+async function renderPulizieAdmin() {
+  const cont = document.getElementById("pulizie-roommate-lista");
+  cont.innerHTML = "";
+  pulizieRoommateCache.forEach((r, i) => {
+    const div = document.createElement("div");
+    div.className = "flex items-center gap-2 text-sm px-1 py-1";
+    div.innerHTML = `
+      <span class="w-5 text-slate-400">${i + 1}.</span>
+      <span class="flex-1">${r.username}</span>
+      <button data-idx="${i}" class="btn-pulizie-su text-slate-400 hover:text-indigo-600" ${i === 0 ? "disabled" : ""}><i class="fa-solid fa-arrow-up"></i></button>
+      <button data-idx="${i}" class="btn-pulizie-giu text-slate-400 hover:text-indigo-600" ${i === pulizieRoommateCache.length - 1 ? "disabled" : ""}><i class="fa-solid fa-arrow-down"></i></button>
+      <button data-idx="${i}" class="btn-pulizie-rimuovi text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark"></i></button>
+    `;
+    cont.appendChild(div);
+  });
+  cont.querySelectorAll(".btn-pulizie-su").forEach((b) => b.addEventListener("click", () => spostaPulizieRoommate(Number(b.dataset.idx), -1)));
+  cont.querySelectorAll(".btn-pulizie-giu").forEach((b) => b.addEventListener("click", () => spostaPulizieRoommate(Number(b.dataset.idx), 1)));
+  cont.querySelectorAll(".btn-pulizie-rimuovi").forEach((b) => b.addEventListener("click", () => rimuoviPulizieRoommate(Number(b.dataset.idx))));
+
+  const tutti = await apiGet("/admin/users");
+  const select = document.getElementById("pulizie-nuovo-roommate");
+  const inRotazione = new Set(pulizieRoommateCache.map((r) => r.user_id));
+  select.innerHTML = tutti
+    .filter((u) => !inRotazione.has(u.id))
+    .map((u) => `<option value="${u.id}">${u.username}</option>`)
+    .join("");
+}
+
+async function salvaOrdinePulizieRoommate() {
+  const user_ids = pulizieRoommateCache.map((r) => r.user_id);
+  pulizieRoommateCache = await apiSend("/pulizie/roommate", "PUT", { user_ids });
+  await renderPulizieAdmin();
+}
+
+function spostaPulizieRoommate(indice, direzione) {
+  const nuovoIndice = indice + direzione;
+  if (nuovoIndice < 0 || nuovoIndice >= pulizieRoommateCache.length) return;
+  const [riga] = pulizieRoommateCache.splice(indice, 1);
+  pulizieRoommateCache.splice(nuovoIndice, 0, riga);
+  salvaOrdinePulizieRoommate();
+}
+
+function rimuoviPulizieRoommate(indice) {
+  pulizieRoommateCache.splice(indice, 1);
+  salvaOrdinePulizieRoommate();
+}
+
+document.getElementById("pulizie-aggiungi-roommate").addEventListener("click", () => {
+  const select = document.getElementById("pulizie-nuovo-roommate");
+  if (!select.value) return;
+  pulizieRoommateCache.push({
+    user_id: Number(select.value),
+    username: select.options[select.selectedIndex].textContent,
+    ordine: pulizieRoommateCache.length,
+  });
+  salvaOrdinePulizieRoommate();
+});
+
+async function caricaPulizieSettimane() {
+  const settimane = await apiGet("/pulizie/settimane?settimane=6");
+  const corrente = settimane[0];
+  const contCorrente = document.getElementById("pulizie-turno-corrente");
+  if (!corrente) {
+    contCorrente.innerHTML = `<p class="text-sm text-slate-400">No roommates configured yet.</p>`;
+    document.getElementById("pulizie-settimane").innerHTML = "";
+    return;
+  }
+  const mioTurno = corrente.assegnato_username === currentUser.username;
+  contCorrente.innerHTML = `
+    <h2 class="text-lg font-semibold mb-2 flex items-center gap-2">
+      <i class="fa-solid fa-broom text-indigo-600"></i> This Week
+    </h2>
+    <p class="text-sm mb-3">${corrente.assegnato_username} is on cleaning duty ${corrente.completato ? '<span class="text-emerald-600">(done)</span>' : ""}</p>
+    <div class="flex gap-2">
+      ${mioTurno && !corrente.completato ? `<button id="btn-pulizie-completa" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition"><i class="fa-solid fa-check"></i> Mark done</button>` : ""}
+      ${mioTurno && !corrente.completato && !corrente.richiesta_pendente ? `<button id="btn-pulizie-swap" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg px-4 py-2 text-sm font-medium transition"><i class="fa-solid fa-right-left"></i> Request swap</button>` : ""}
+    </div>
+    ${corrente.richiesta_pendente ? `<p class="text-xs text-slate-400 mt-2">Swap requested to ${corrente.richiesta_pendente.target_username} — pending</p>` : ""}
+  `;
+  document.getElementById("btn-pulizie-completa")?.addEventListener("click", async () => {
+    await apiSend(`/pulizie/settimane/${corrente.settimana_idx}/completa`, "POST");
+    caricaPulizie();
+  });
+  document.getElementById("btn-pulizie-swap")?.addEventListener("click", () => apriModalePulizieSwap(corrente.settimana_idx));
+
+  const cont = document.getElementById("pulizie-settimane");
+  cont.innerHTML = "";
+  for (const s of settimane.slice(1)) {
+    const div = document.createElement("div");
+    div.className = "flex items-center justify-between text-sm px-1 py-1 border-b border-slate-100 dark:border-slate-800 last:border-0";
+    div.innerHTML = `<span>${formattaData(s.inizio)}</span><span class="font-medium">${s.assegnato_username}</span>`;
+    cont.appendChild(div);
+  }
+}
+
+function apriModalePulizieSwap(settimana_idx) {
+  document.getElementById("pulizie-swap-settimana").value = settimana_idx;
+  const select = document.getElementById("pulizie-swap-target");
+  select.innerHTML = pulizieRoommateCache
+    .filter((r) => r.username !== currentUser.username)
+    .map((r) => `<option value="${r.user_id}">${r.username}</option>`)
+    .join("");
+  document.getElementById("modal-pulizie-swap").classList.remove("hidden");
+  document.getElementById("modal-pulizie-swap").classList.add("flex");
+}
+
+function chiudiModalePulizieSwap() {
+  document.getElementById("modal-pulizie-swap").classList.add("hidden");
+  document.getElementById("modal-pulizie-swap").classList.remove("flex");
+}
+
+document.getElementById("pulizie-swap-chiudi").addEventListener("click", chiudiModalePulizieSwap);
+
+document.getElementById("form-pulizie-swap").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const settimana_idx = Number(document.getElementById("pulizie-swap-settimana").value);
+  const target_id = Number(document.getElementById("pulizie-swap-target").value);
+  await apiSend("/pulizie/swap", "POST", { settimana_idx, target_id });
+  chiudiModalePulizieSwap();
+  caricaPulizie();
+});
+
+async function caricaPulizieSwapRichieste() {
+  const richieste = await apiGet("/pulizie/swap/mie");
+  const cont = document.getElementById("pulizie-swap-richieste");
+  cont.innerHTML = "";
+  if (richieste.length === 0) {
+    cont.innerHTML = `<p class="text-sm text-slate-400">No pending swap requests.</p>`;
+    return;
+  }
+  for (const r of richieste) {
+    const inArrivo = r.target_username === currentUser.username;
+    const div = document.createElement("div");
+    div.className = "flex items-center justify-between gap-2 text-sm px-1 py-1.5 border-b border-slate-100 dark:border-slate-800 last:border-0";
+    div.innerHTML = `
+      <span>${formattaData(r.inizio)} — ${inArrivo ? `${r.richiedente_username} wants you to cover their turn` : `Waiting for ${r.target_username} to respond`}</span>
+      <div class="flex gap-2 shrink-0">
+        ${inArrivo
+          ? `<button data-id="${r.id}" class="btn-pulizie-swap-accetta text-emerald-600 hover:text-emerald-700"><i class="fa-solid fa-check"></i></button>
+             <button data-id="${r.id}" class="btn-pulizie-swap-rifiuta text-red-500 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button>`
+          : `<button data-id="${r.id}" class="btn-pulizie-swap-annulla text-slate-400 hover:text-red-500"><i class="fa-solid fa-ban"></i></button>`}
+      </div>
+    `;
+    cont.appendChild(div);
+  }
+  cont.querySelectorAll(".btn-pulizie-swap-accetta").forEach((b) => b.addEventListener("click", async () => { await apiSend(`/pulizie/swap/${b.dataset.id}/accetta`, "POST"); caricaPulizie(); }));
+  cont.querySelectorAll(".btn-pulizie-swap-rifiuta").forEach((b) => b.addEventListener("click", async () => { await apiSend(`/pulizie/swap/${b.dataset.id}/rifiuta`, "POST"); caricaPulizie(); }));
+  cont.querySelectorAll(".btn-pulizie-swap-annulla").forEach((b) => b.addEventListener("click", async () => { await apiSend(`/pulizie/swap/${b.dataset.id}/annulla`, "POST"); caricaPulizie(); }));
+}
+
+async function caricaPulizieStats() {
+  const stats = await apiGet("/pulizie/stats");
+  const cont = document.getElementById("pulizie-stats");
+  cont.innerHTML = "";
+  if (stats.length === 0) {
+    cont.innerHTML = `<p class="text-slate-400">No data yet.</p>`;
+    return;
+  }
+  for (const s of stats) {
+    const div = document.createElement("div");
+    div.className = "flex items-center justify-between px-1 py-1 border-b border-slate-100 dark:border-slate-800 last:border-0";
+    div.innerHTML = `<span class="font-medium">${s.username}</span><span class="text-slate-500">${s.turni_completati}/${s.turni_assegnati_totali} done · ${s.swap_accettati_dati} swaps given · ${s.swap_accettati_ricevuti} swaps received</span>`;
+    cont.appendChild(div);
+  }
 }
