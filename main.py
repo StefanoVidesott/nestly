@@ -1408,6 +1408,8 @@ def accetta_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depen
     settimana = db.query(PulizieSettimana).filter(PulizieSettimana.settimana_idx == richiesta.settimana_idx).first()
     if not settimana or settimana.assegnato_user_id != richiesta.richiedente_id:
         raise HTTPException(409, "Week assignment changed since the request was created")
+    if settimana.completato:
+        raise HTTPException(400, "Week already completed")
     settimana.assegnato_user_id = richiesta.target_id
     richiesta.stato = "accettata"
     richiesta.risposto_il = datetime.utcnow()

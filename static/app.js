@@ -1708,7 +1708,7 @@ async function caricaGrigliaMealPlan() {
   });
 }
 
-// ================= 10. PULIZIE (chore rotation) =================
+// ================= 13. PULIZIE (chore rotation) =================
 
 let pulizieRoommateCache = [];
 
@@ -1805,8 +1805,12 @@ async function caricaPulizieSettimane() {
     ${corrente.richiesta_pendente ? `<p class="text-xs text-slate-400 mt-2">Swap requested to ${corrente.richiesta_pendente.target_username} — pending</p>` : ""}
   `;
   document.getElementById("btn-pulizie-completa")?.addEventListener("click", async () => {
-    await apiSend(`/pulizie/settimane/${corrente.settimana_idx}/completa`, "POST");
-    caricaPulizie();
+    try {
+      await apiSend(`/pulizie/settimane/${corrente.settimana_idx}/completa`, "POST");
+      caricaPulizie();
+    } catch (err) {
+      alert(err.message);
+    }
   });
   document.getElementById("btn-pulizie-swap")?.addEventListener("click", () => apriModalePulizieSwap(corrente.settimana_idx));
 
@@ -1842,9 +1846,13 @@ document.getElementById("form-pulizie-swap").addEventListener("submit", async (e
   e.preventDefault();
   const settimana_idx = Number(document.getElementById("pulizie-swap-settimana").value);
   const target_id = Number(document.getElementById("pulizie-swap-target").value);
-  await apiSend("/pulizie/swap", "POST", { settimana_idx, target_id });
-  chiudiModalePulizieSwap();
-  caricaPulizie();
+  try {
+    await apiSend("/pulizie/swap", "POST", { settimana_idx, target_id });
+    chiudiModalePulizieSwap();
+    caricaPulizie();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 
 async function caricaPulizieSwapRichieste() {
@@ -1870,8 +1878,22 @@ async function caricaPulizieSwapRichieste() {
     `;
     cont.appendChild(div);
   }
-  cont.querySelectorAll(".btn-pulizie-swap-accetta").forEach((b) => b.addEventListener("click", async () => { await apiSend(`/pulizie/swap/${b.dataset.id}/accetta`, "POST"); caricaPulizie(); }));
-  cont.querySelectorAll(".btn-pulizie-swap-rifiuta").forEach((b) => b.addEventListener("click", async () => { await apiSend(`/pulizie/swap/${b.dataset.id}/rifiuta`, "POST"); caricaPulizie(); }));
+  cont.querySelectorAll(".btn-pulizie-swap-accetta").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await apiSend(`/pulizie/swap/${b.dataset.id}/accetta`, "POST");
+      caricaPulizie();
+    } catch (err) {
+      alert(err.message);
+    }
+  }));
+  cont.querySelectorAll(".btn-pulizie-swap-rifiuta").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await apiSend(`/pulizie/swap/${b.dataset.id}/rifiuta`, "POST");
+      caricaPulizie();
+    } catch (err) {
+      alert(err.message);
+    }
+  }));
   cont.querySelectorAll(".btn-pulizie-swap-annulla").forEach((b) => b.addEventListener("click", async () => { await apiSend(`/pulizie/swap/${b.dataset.id}/annulla`, "POST"); caricaPulizie(); }));
 }
 

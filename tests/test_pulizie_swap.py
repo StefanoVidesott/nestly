@@ -119,6 +119,26 @@ def test_requester_can_cancel_a_pending_swap(client, admin_client):
     assert resp.json()["stato"] == "annullata"
 
 
+def test_cannot_accept_swap_if_week_completed_in_the_meantime(client, admin_client):
+    _configura_roommate(admin_client, ["alice", "bob"])
+    corrente = _turno_corrente(admin_client)
+    richiedente = corrente["assegnato_username"]
+    target_username = "bob" if richiedente == "alice" else "alice"
+    _login(client, richiedente)
+    target_id = [r for r in admin_client.get("/api/pulizie/roommate").json() if r["username"] == target_username][0]["user_id"]
+    swap = client.post("/api/pulizie/swap", json={"settimana_idx": corrente["settimana_idx"], "target_id": target_id}).json()
+
+    resp_completa = client.post(f"/api/pulizie/settimane/{corrente['settimana_idx']}/completa")
+    assert resp_completa.status_code == 200
+
+    _login(client, target_username)
+    resp = client.post(f"/api/pulizie/swap/{swap['id']}/accetta")
+    assert resp.status_code == 400
+
+    settimane = admin_client.get("/api/pulizie/settimane").json()
+    assert settimane[0]["assegnato_username"] == richiedente
+
+
 def test_pending_swap_shows_up_in_settimane_and_swap_mie(client, admin_client):
     _configura_roommate(admin_client, ["alice", "bob"])
     corrente = _turno_corrente(admin_client)
