@@ -17,7 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-DATABASE_URL = f"sqlite:///{DATA_DIR}/erasmus.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DATA_DIR}/erasmus.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -27,7 +27,7 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24 * 7
 COOKIE_NAME = "session_token"
 
-MODULI = ["lavanderia", "stanza", "dispensa", "finanza", "kanban", "bucketlist", "trondheim", "bookmark", "mealplan"]
+MODULI = ["lavanderia", "stanza", "dispensa", "finanza", "kanban", "bucketlist", "trondheim", "bookmark", "mealplan", "pulizie"]
 
 
 def get_db():
@@ -179,6 +179,44 @@ class MealPlan(Base):
     __table_args__ = (UniqueConstraint("user_id", "data", "meal_type", name="uq_mealplan_utente_data_tipo"),)
 
 
+class PulizieRoommate(Base):
+    __tablename__ = "pulizie_roommate"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("utenti.id"), nullable=False, unique=True, index=True)
+    ordine = Column(Integer, nullable=False)
+
+
+class PulizieSettimana(Base):
+    __tablename__ = "pulizie_settimana"
+    id = Column(Integer, primary_key=True, index=True)
+    settimana_idx = Column(Integer, nullable=False, unique=True, index=True)
+    assegnato_user_id = Column(Integer, ForeignKey("utenti.id"), nullable=False)
+    completato = Column(Boolean, nullable=False, default=False)
+    completato_il = Column(DateTime, nullable=True)
+
+
+class PulizieSwapRichiesta(Base):
+    __tablename__ = "pulizie_swap_richiesta"
+    id = Column(Integer, primary_key=True, index=True)
+    settimana_idx = Column(Integer, nullable=False, index=True)
+    richiedente_id = Column(Integer, ForeignKey("utenti.id"), nullable=False)
+    target_id = Column(Integer, ForeignKey("utenti.id"), nullable=False)
+    stato = Column(String, nullable=False, default="in_attesa")  # in_attesa | accettata | rifiutata | annullata
+    creato_il = Column(DateTime, nullable=False, default=datetime.utcnow)
+    risposto_il = Column(DateTime, nullable=True)
+
+
+EPOCA_PULIZIE = date(2020, 1, 6)  # un lunedì, punto di riferimento fisso per la rotazione
+
+
+def settimana_idx(d: date) -> int:
+    return (d - EPOCA_PULIZIE).days // 7
+
+
+def data_settimana(idx: int) -> date:
+    return EPOCA_PULIZIE + timedelta(weeks=idx)
+
+
 Base.metadata.create_all(bind=engine)
 
 # Lightweight auto-migration: add columns introduced after initial deploy
@@ -218,6 +256,31 @@ def moduli_utente(user: User) -> list[str]:
     if user.role == "admin":
         return list(MODULI)
     return [m for m in user.allowed_modules.split(",") if m]
+
+
+def roommate_ordinati(db: Session) -> list[User]:
+    righe = (
+        db.query(PulizieRoommate, User)
+        .join(User, User.id == PulizieRoommate.user_id)
+        .order_by(PulizieRoommate.ordine)
+        .all()
+    )
+    return [u for _, u in righe]
+
+
+def assicura_settimana(db: Session, idx: int) -> Optional[PulizieSettimana]:
+    riga = db.query(PulizieSettimana).filter(PulizieSettimana.settimana_idx == idx).first()
+    if riga:
+        return riga
+    roommate = roommate_ordinati(db)
+    if not roommate:
+        return None
+    assegnato = roommate[idx % len(roommate)]
+    riga = PulizieSettimana(settimana_idx=idx, assegnato_user_id=assegnato.id)
+    db.add(riga)
+    db.commit()
+    db.refresh(riga)
+    return riga
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -496,6 +559,56 @@ class ExpenseIn(BaseModel):
 class ExpenseOut(ExpenseIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class PulizieRoommateIn(BaseModel):
+    user_ids: list[int]
+
+
+class PulizieRoommateOut(BaseModel):
+    user_id: int
+    username: str
+    ordine: int
+
+
+class PulizieSettimanaOut(BaseModel):
+    settimana_idx: int
+    inizio: date
+    assegnato_user_id: int
+    assegnato_username: str
+    completato: bool
+    completato_il: Optional[datetime] = None
+    richiesta_pendente: Optional["PulizieSwapOut"] = None
+
+
+class PulizieSwapIn(BaseModel):
+    settimana_idx: int
+    target_id: int
+
+
+class PulizieSwapOut(BaseModel):
+    id: int
+    settimana_idx: int
+    inizio: date
+    richiedente_id: int
+    richiedente_username: str
+    target_id: int
+    target_username: str
+    stato: str
+    creato_il: datetime
+
+
+class PulizieStatOut(BaseModel):
+    user_id: int
+    username: str
+    turni_assegnati_totali: int
+    turni_completati: int
+    swap_richiesti: int
+    swap_accettati_dati: int
+    swap_accettati_ricevuti: int
+
+
+PulizieSettimanaOut.model_rebuild()
 
 
 IGIENE_TIPI_DEFAULT = {"cleaning": 7, "towels": 7, "sheets": 14}
@@ -1201,6 +1314,239 @@ def elimina_mealplan(item_id: int, db: Session = Depends(get_db), user: User = D
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+# ---------- 11. PULIZIE ----------
+
+@app.get("/api/pulizie/roommate", response_model=list[PulizieRoommateOut])
+def lista_roommate_pulizie(db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    righe = (
+        db.query(PulizieRoommate, User)
+        .join(User, User.id == PulizieRoommate.user_id)
+        .order_by(PulizieRoommate.ordine)
+        .all()
+    )
+    return [PulizieRoommateOut(user_id=u.id, username=u.username, ordine=r.ordine) for r, u in righe]
+
+
+@app.put("/api/pulizie/roommate", response_model=list[PulizieRoommateOut])
+def imposta_roommate_pulizie(dati: PulizieRoommateIn, db: Session = Depends(get_db), admin: User = Depends(richiedi_admin)):
+    if len(dati.user_ids) != len(set(dati.user_ids)):
+        raise HTTPException(400, "Duplicate user in list")
+    utenti_validi = {u.id for u in db.query(User).filter(User.id.in_(dati.user_ids)).all()}
+    if len(utenti_validi) != len(dati.user_ids):
+        raise HTTPException(400, "Unknown user in list")
+    db.query(PulizieRoommate).delete()
+    for posizione, uid in enumerate(dati.user_ids):
+        db.add(PulizieRoommate(user_id=uid, ordine=posizione))
+    db.commit()
+    righe = (
+        db.query(PulizieRoommate, User)
+        .join(User, User.id == PulizieRoommate.user_id)
+        .order_by(PulizieRoommate.ordine)
+        .all()
+    )
+    return [PulizieRoommateOut(user_id=u.id, username=u.username, ordine=r.ordine) for r, u in righe]
+
+
+def _swap_out(richiesta: PulizieSwapRichiesta, db: Session) -> PulizieSwapOut:
+    richiedente = db.query(User).get(richiesta.richiedente_id)
+    target = db.query(User).get(richiesta.target_id)
+    return PulizieSwapOut(
+        id=richiesta.id,
+        settimana_idx=richiesta.settimana_idx,
+        inizio=data_settimana(richiesta.settimana_idx),
+        richiedente_id=richiesta.richiedente_id,
+        richiedente_username=richiedente.username,
+        target_id=richiesta.target_id,
+        target_username=target.username,
+        stato=richiesta.stato,
+        creato_il=richiesta.creato_il,
+    )
+
+
+@app.post("/api/pulizie/swap", response_model=PulizieSwapOut)
+def crea_richiesta_swap(dati: PulizieSwapIn, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    oggi_idx = settimana_idx(date.today())
+    if dati.settimana_idx < oggi_idx:
+        raise HTTPException(400, "Cannot request a swap for a past week")
+    riga = assicura_settimana(db, dati.settimana_idx)
+    if not riga:
+        raise HTTPException(404, "No roommates configured")
+    if riga.assegnato_user_id != user.id:
+        raise HTTPException(403, "Not your turn this week")
+    if riga.completato:
+        raise HTTPException(400, "Week already completed")
+    if dati.target_id == user.id:
+        raise HTTPException(400, "Cannot request a swap with yourself")
+    target_valido = db.query(PulizieRoommate).filter(PulizieRoommate.user_id == dati.target_id).first()
+    if not target_valido:
+        raise HTTPException(400, "Target is not a roommate in the rotation")
+    esistente = (
+        db.query(PulizieSwapRichiesta)
+        .filter(PulizieSwapRichiesta.settimana_idx == dati.settimana_idx, PulizieSwapRichiesta.stato == "in_attesa")
+        .first()
+    )
+    if esistente:
+        raise HTTPException(400, "A pending swap request already exists for this week")
+    richiesta = PulizieSwapRichiesta(settimana_idx=dati.settimana_idx, richiedente_id=user.id, target_id=dati.target_id)
+    db.add(richiesta)
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.post("/api/pulizie/swap/{swap_id}/accetta", response_model=PulizieSwapOut)
+def accetta_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    richiesta = db.query(PulizieSwapRichiesta).get(swap_id)
+    if not richiesta:
+        raise HTTPException(404, "Swap request not found")
+    if richiesta.target_id != user.id:
+        raise HTTPException(403, "Only the target roommate can accept")
+    if richiesta.stato != "in_attesa":
+        raise HTTPException(400, "Request is no longer pending")
+    settimana = db.query(PulizieSettimana).filter(PulizieSettimana.settimana_idx == richiesta.settimana_idx).first()
+    if not settimana or settimana.assegnato_user_id != richiesta.richiedente_id:
+        raise HTTPException(409, "Week assignment changed since the request was created")
+    if settimana.completato:
+        raise HTTPException(400, "Week already completed")
+    settimana.assegnato_user_id = richiesta.target_id
+    richiesta.stato = "accettata"
+    richiesta.risposto_il = datetime.utcnow()
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.post("/api/pulizie/swap/{swap_id}/rifiuta", response_model=PulizieSwapOut)
+def rifiuta_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    richiesta = db.query(PulizieSwapRichiesta).get(swap_id)
+    if not richiesta:
+        raise HTTPException(404, "Swap request not found")
+    if richiesta.target_id != user.id:
+        raise HTTPException(403, "Only the target roommate can reject")
+    if richiesta.stato != "in_attesa":
+        raise HTTPException(400, "Request is no longer pending")
+    richiesta.stato = "rifiutata"
+    richiesta.risposto_il = datetime.utcnow()
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.post("/api/pulizie/swap/{swap_id}/annulla", response_model=PulizieSwapOut)
+def annulla_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    richiesta = db.query(PulizieSwapRichiesta).get(swap_id)
+    if not richiesta:
+        raise HTTPException(404, "Swap request not found")
+    if richiesta.richiedente_id != user.id:
+        raise HTTPException(403, "Only the requester can cancel")
+    if richiesta.stato != "in_attesa":
+        raise HTTPException(400, "Request is no longer pending")
+    richiesta.stato = "annullata"
+    richiesta.risposto_il = datetime.utcnow()
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.get("/api/pulizie/swap/mie", response_model=list[PulizieSwapOut])
+def mie_richieste_swap(db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    righe = (
+        db.query(PulizieSwapRichiesta)
+        .filter(
+            PulizieSwapRichiesta.stato == "in_attesa",
+            (PulizieSwapRichiesta.richiedente_id == user.id) | (PulizieSwapRichiesta.target_id == user.id),
+        )
+        .order_by(PulizieSwapRichiesta.creato_il)
+        .all()
+    )
+    return [_swap_out(r, db) for r in righe]
+
+
+@app.get("/api/pulizie/settimane", response_model=list[PulizieSettimanaOut])
+def lista_settimane_pulizie(settimane: int = 4, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    settimane = max(1, min(settimane, 26))
+    oggi_idx = settimana_idx(date.today())
+    risultato = []
+    for offset in range(settimane):
+        idx = oggi_idx + offset
+        riga = assicura_settimana(db, idx)
+        if not riga:
+            break
+        assegnato = db.query(User).get(riga.assegnato_user_id)
+        richiesta = (
+            db.query(PulizieSwapRichiesta)
+            .filter(PulizieSwapRichiesta.settimana_idx == idx, PulizieSwapRichiesta.stato == "in_attesa")
+            .first()
+        )
+        risultato.append(PulizieSettimanaOut(
+            settimana_idx=idx,
+            inizio=data_settimana(idx),
+            assegnato_user_id=assegnato.id,
+            assegnato_username=assegnato.username,
+            completato=riga.completato,
+            completato_il=riga.completato_il,
+            richiesta_pendente=_swap_out(richiesta, db) if richiesta else None,
+        ))
+    return risultato
+
+
+@app.post("/api/pulizie/settimane/{idx}/completa", response_model=PulizieSettimanaOut)
+def completa_settimana_pulizie(idx: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    riga = assicura_settimana(db, idx)
+    if not riga:
+        raise HTTPException(404, "No roommates configured")
+    if riga.assegnato_user_id != user.id:
+        raise HTTPException(403, "Not your turn this week")
+    if not riga.completato:
+        riga.completato = True
+        riga.completato_il = datetime.utcnow()
+        db.commit()
+        db.refresh(riga)
+    assegnato = db.query(User).get(riga.assegnato_user_id)
+    return PulizieSettimanaOut(
+        settimana_idx=idx,
+        inizio=data_settimana(idx),
+        assegnato_user_id=assegnato.id,
+        assegnato_username=assegnato.username,
+        completato=riga.completato,
+        completato_il=riga.completato_il,
+    )
+
+
+@app.get("/api/pulizie/stats", response_model=list[PulizieStatOut])
+def stats_pulizie(db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    oggi_idx = settimana_idx(date.today())
+    risultato = []
+    for u in roommate_ordinati(db):
+        turni_assegnati = db.query(PulizieSettimana).filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.settimana_idx <= oggi_idx).count()
+        turni_completati = (
+            db.query(PulizieSettimana)
+            .filter(PulizieSettimana.assegnato_user_id == u.id, PulizieSettimana.completato == True, PulizieSettimana.settimana_idx <= oggi_idx)  # noqa: E712
+            .count()
+        )
+        swap_richiesti = db.query(PulizieSwapRichiesta).filter(PulizieSwapRichiesta.richiedente_id == u.id).count()
+        swap_dati = (
+            db.query(PulizieSwapRichiesta)
+            .filter(PulizieSwapRichiesta.richiedente_id == u.id, PulizieSwapRichiesta.stato == "accettata")
+            .count()
+        )
+        swap_ricevuti = (
+            db.query(PulizieSwapRichiesta)
+            .filter(PulizieSwapRichiesta.target_id == u.id, PulizieSwapRichiesta.stato == "accettata")
+            .count()
+        )
+        risultato.append(PulizieStatOut(
+            user_id=u.id,
+            username=u.username,
+            turni_assegnati_totali=turni_assegnati,
+            turni_completati=turni_completati,
+            swap_richiesti=swap_richiesti,
+            swap_accettati_dati=swap_dati,
+            swap_accettati_ricevuti=swap_ricevuti,
+        ))
+    return risultato
 
 
 # ---------- STATIC FILES ----------

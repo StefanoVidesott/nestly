@@ -323,6 +323,64 @@
         </div>
       </section>
 
+      <!-- ===== PULIZIE ===== -->
+      <section id="section-pulizie" class="hidden space-y-6">
+        <h1 class="text-2xl font-bold">Chores</h1>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl" id="pulizie-turno-corrente"></div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-calendar-week text-indigo-600"></i> Upcoming Weeks
+          </h2>
+          <div id="pulizie-settimane" class="space-y-2"></div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-right-left text-indigo-600"></i> Swap Requests
+          </h2>
+          <div id="pulizie-swap-richieste" class="space-y-2"></div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-chart-simple text-indigo-600"></i> Stats
+          </h2>
+          <div id="pulizie-stats" class="space-y-1 text-sm"></div>
+        </div>
+
+        <div id="pulizie-admin" class="hidden bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 max-w-xl">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-user-shield text-indigo-600"></i> Rotation Roommates (admin)
+          </h2>
+          <p class="text-xs text-slate-400 mb-2">Order defines the rotation. Use the arrows to reorder.</p>
+          <div id="pulizie-roommate-lista" class="space-y-1 mb-3"></div>
+          <div class="flex gap-2">
+            <select id="pulizie-nuovo-roommate" class="flex-1 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm"></select>
+            <button id="pulizie-aggiungi-roommate" type="button" class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 text-sm font-medium transition">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
+        </div>
+
+        <div id="modal-pulizie-swap" class="hidden fixed inset-0 bg-black/50 items-center justify-center z-50 p-4">
+          <div class="bg-white dark:bg-slate-900 rounded-xl shadow-lg w-full max-w-sm p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">Request a swap</h3>
+              <button type="button" id="pulizie-swap-chiudi" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <form id="form-pulizie-swap" class="space-y-3">
+              <input type="hidden" id="pulizie-swap-settimana" />
+              <select id="pulizie-swap-target" required class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-sm"></select>
+              <button class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition">
+                Send Request
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+
       <!-- ===== ADMIN ===== -->
       <section id="section-admin" class="hidden space-y-6">
         <h1 class="text-2xl font-bold">Admin Settings</h1>
