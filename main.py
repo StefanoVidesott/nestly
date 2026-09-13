@@ -581,8 +581,21 @@ class PulizieSettimanaOut(BaseModel):
     richiesta_pendente: Optional["PulizieSwapOut"] = None
 
 
+class PulizieSwapIn(BaseModel):
+    settimana_idx: int
+    target_id: int
+
+
 class PulizieSwapOut(BaseModel):
     id: int
+    settimana_idx: int
+    inizio: date
+    richiedente_id: int
+    richiedente_username: str
+    target_id: int
+    target_username: str
+    stato: str
+    creato_il: datetime
 
 
 PulizieSettimanaOut.model_rebuild()
@@ -1326,6 +1339,119 @@ def imposta_roommate_pulizie(dati: PulizieRoommateIn, db: Session = Depends(get_
     return [PulizieRoommateOut(user_id=u.id, username=u.username, ordine=r.ordine) for r, u in righe]
 
 
+def _swap_out(richiesta: PulizieSwapRichiesta, db: Session) -> PulizieSwapOut:
+    richiedente = db.query(User).get(richiesta.richiedente_id)
+    target = db.query(User).get(richiesta.target_id)
+    return PulizieSwapOut(
+        id=richiesta.id,
+        settimana_idx=richiesta.settimana_idx,
+        inizio=data_settimana(richiesta.settimana_idx),
+        richiedente_id=richiesta.richiedente_id,
+        richiedente_username=richiedente.username,
+        target_id=richiesta.target_id,
+        target_username=target.username,
+        stato=richiesta.stato,
+        creato_il=richiesta.creato_il,
+    )
+
+
+@app.post("/api/pulizie/swap", response_model=PulizieSwapOut)
+def crea_richiesta_swap(dati: PulizieSwapIn, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    oggi_idx = settimana_idx(date.today())
+    if dati.settimana_idx < oggi_idx:
+        raise HTTPException(400, "Cannot request a swap for a past week")
+    riga = assicura_settimana(db, dati.settimana_idx)
+    if not riga:
+        raise HTTPException(404, "No roommates configured")
+    if riga.assegnato_user_id != user.id:
+        raise HTTPException(403, "Not your turn this week")
+    if riga.completato:
+        raise HTTPException(400, "Week already completed")
+    if dati.target_id == user.id:
+        raise HTTPException(400, "Cannot request a swap with yourself")
+    target_valido = db.query(PulizieRoommate).filter(PulizieRoommate.user_id == dati.target_id).first()
+    if not target_valido:
+        raise HTTPException(400, "Target is not a roommate in the rotation")
+    esistente = (
+        db.query(PulizieSwapRichiesta)
+        .filter(PulizieSwapRichiesta.settimana_idx == dati.settimana_idx, PulizieSwapRichiesta.stato == "in_attesa")
+        .first()
+    )
+    if esistente:
+        raise HTTPException(400, "A pending swap request already exists for this week")
+    richiesta = PulizieSwapRichiesta(settimana_idx=dati.settimana_idx, richiedente_id=user.id, target_id=dati.target_id)
+    db.add(richiesta)
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.post("/api/pulizie/swap/{swap_id}/accetta", response_model=PulizieSwapOut)
+def accetta_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    richiesta = db.query(PulizieSwapRichiesta).get(swap_id)
+    if not richiesta:
+        raise HTTPException(404, "Swap request not found")
+    if richiesta.target_id != user.id:
+        raise HTTPException(403, "Only the target roommate can accept")
+    if richiesta.stato != "in_attesa":
+        raise HTTPException(400, "Request is no longer pending")
+    settimana = db.query(PulizieSettimana).filter(PulizieSettimana.settimana_idx == richiesta.settimana_idx).first()
+    if not settimana or settimana.assegnato_user_id != richiesta.richiedente_id:
+        raise HTTPException(409, "Week assignment changed since the request was created")
+    settimana.assegnato_user_id = richiesta.target_id
+    richiesta.stato = "accettata"
+    richiesta.risposto_il = datetime.utcnow()
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.post("/api/pulizie/swap/{swap_id}/rifiuta", response_model=PulizieSwapOut)
+def rifiuta_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    richiesta = db.query(PulizieSwapRichiesta).get(swap_id)
+    if not richiesta:
+        raise HTTPException(404, "Swap request not found")
+    if richiesta.target_id != user.id:
+        raise HTTPException(403, "Only the target roommate can reject")
+    if richiesta.stato != "in_attesa":
+        raise HTTPException(400, "Request is no longer pending")
+    richiesta.stato = "rifiutata"
+    richiesta.risposto_il = datetime.utcnow()
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.post("/api/pulizie/swap/{swap_id}/annulla", response_model=PulizieSwapOut)
+def annulla_swap(swap_id: int, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    richiesta = db.query(PulizieSwapRichiesta).get(swap_id)
+    if not richiesta:
+        raise HTTPException(404, "Swap request not found")
+    if richiesta.richiedente_id != user.id:
+        raise HTTPException(403, "Only the requester can cancel")
+    if richiesta.stato != "in_attesa":
+        raise HTTPException(400, "Request is no longer pending")
+    richiesta.stato = "annullata"
+    richiesta.risposto_il = datetime.utcnow()
+    db.commit()
+    db.refresh(richiesta)
+    return _swap_out(richiesta, db)
+
+
+@app.get("/api/pulizie/swap/mie", response_model=list[PulizieSwapOut])
+def mie_richieste_swap(db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
+    righe = (
+        db.query(PulizieSwapRichiesta)
+        .filter(
+            PulizieSwapRichiesta.stato == "in_attesa",
+            (PulizieSwapRichiesta.richiedente_id == user.id) | (PulizieSwapRichiesta.target_id == user.id),
+        )
+        .order_by(PulizieSwapRichiesta.creato_il)
+        .all()
+    )
+    return [_swap_out(r, db) for r in righe]
+
+
 @app.get("/api/pulizie/settimane", response_model=list[PulizieSettimanaOut])
 def lista_settimane_pulizie(settimane: int = 4, db: Session = Depends(get_db), user: User = Depends(richiedi_modulo("pulizie"))):
     settimane = max(1, min(settimane, 26))
@@ -1337,6 +1463,11 @@ def lista_settimane_pulizie(settimane: int = 4, db: Session = Depends(get_db), u
         if not riga:
             break
         assegnato = db.query(User).get(riga.assegnato_user_id)
+        richiesta = (
+            db.query(PulizieSwapRichiesta)
+            .filter(PulizieSwapRichiesta.settimana_idx == idx, PulizieSwapRichiesta.stato == "in_attesa")
+            .first()
+        )
         risultato.append(PulizieSettimanaOut(
             settimana_idx=idx,
             inizio=data_settimana(idx),
@@ -1344,6 +1475,7 @@ def lista_settimane_pulizie(settimane: int = 4, db: Session = Depends(get_db), u
             assegnato_username=assegnato.username,
             completato=riga.completato,
             completato_il=riga.completato_il,
+            richiesta_pendente=_swap_out(richiesta, db) if richiesta else None,
         ))
     return risultato
 
